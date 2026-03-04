@@ -1,0 +1,112 @@
+{
+  "projectType": "general",
+  "projectName": "Oxidized Cell",
+  "projectDescription": "A PlayStation 3 emulator written in Rust and C++ that accurately emulates the Cell Broadband Engine and RSX graphics processor.",
+  "theme": "aspen",
+  "primaryColor": "#7c7c7c",
+  "lightColor": "#101010",
+  "darkColor": "#c2c2c2",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart",
+              "firmware-setup"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/cell-be",
+              "concepts/memory-model",
+              "concepts/execution-modes"
+            ]
+          },
+          {
+            "group": "Components",
+            "pages": [
+              "components/ppu",
+              "components/spu",
+              "components/rsx",
+              "components/lv2-kernel",
+              "components/hle-modules",
+              "components/audio",
+              "components/input",
+              "components/vfs"
+            ]
+          },
+          {
+            "group": "User Guide",
+            "pages": [
+              "guide/configuration",
+              "guide/loading-games",
+              "guide/debugging",
+              "guide/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "dev/building",
+              "dev/project-structure",
+              "dev/contributing"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "api/core",
+              "api/ppu",
+              "api/spu",
+              "api/rsx",
+              "api/memory",
+              "api/lv2",
+              "api/loader",
+              "api/hle"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Full PPU interpreter with VMX/AltiVec SIMD support",
+    "Complete SPU interpreter with 128-bit vector operations",
+    "Vulkan-based RSX graphics rendering",
+    "LLVM-based JIT compilation for PPU and SPU",
+    "LV2 kernel syscall emulation",
+    "HLE implementations of PS3 system libraries",
+    "ELF/SELF/PRX loader with decryption support",
+    "Cross-platform audio and input handling",
+    "ISO 9660, PKG, and PARAM.SFO support"
+  ],
+  "publicApiSurface": [
+    "oc_core::Emulator",
+    "oc_core::Config",
+    "oc_ppu::PpuInterpreter",
+    "oc_ppu::PpuThread",
+    "oc_spu::SpuInterpreter",
+    "oc_spu::SpuThread",
+    "oc_rsx::RsxThread",
+    "oc_rsx::VulkanBackend",
+    "oc_memory::MemoryManager",
+    "oc_lv2::SyscallHandler",
+    "oc_loader::ElfLoader",
+    "oc_loader::SelfLoader",
+    "oc_loader::PrxLoader",
+    "oc_hle::ModuleRegistry",
+    "oc_hle::HleDispatcher"
+  ]
+}
