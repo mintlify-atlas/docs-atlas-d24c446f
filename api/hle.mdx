@@ -1,0 +1,455 @@
+---
+title: "oc_hle"
+description: "High Level Emulation of PS3 system libraries"
+---
+
+The `oc_hle` crate provides high-level emulation implementations of PS3 system libraries (cellGcmSys, cellSysutil, cellPad, etc.).
+
+## Overview
+
+Instead of running the actual PS3 firmware code, HLE intercepts library calls and provides native implementations. This approach:
+
+- Improves performance (no interpretation/JIT of library code)
+- Enables better debugging and logging
+- Allows customization of system behavior
+- Reduces memory footprint
+
+## ModuleRegistry
+
+Central registry that maps PS3 library NIDs to HLE handler functions.
+
+### Creation
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new module registry with all default HLE modules registered.
+  
+  ```rust
+  use oc_hle::ModuleRegistry;
+  
+  let registry = ModuleRegistry::new();
+  ```
+</ParamField>
+
+### Module access
+
+<ParamField path="get_module" type="fn(&self, name: &str) -> Option<&HleModule>">
+  Gets a module by name.
+  
+  ```rust
+  if let Some(gcm) = registry.get_module("cellGcmSys") {
+      println!("cellGcmSys has {} functions", gcm.total_count());
+  }
+  ```
+</ParamField>
+
+<ParamField path="register_module" type="fn(&mut self, module: HleModule)">
+  Registers a new HLE module.
+  
+  ```rust
+  let mut module = HleModule::new("mylib");
+  module.register_named(0x12345678, "myfunction", my_handler, true);
+  registry.register_module(module);
+  ```
+</ParamField>
+
+<ParamField path="find_function" type="fn(&self, module: &str, nid: u32) -> Option<&HleFunction>">
+  Finds a function by module name and NID.
+  
+  ```rust
+  if let Some(func) = registry.find_function("cellGcmSys", 0x21AC3697) {
+      // Found cellGcmInit
+  }
+  ```
+</ParamField>
+
+### Function dispatch
+
+<ParamField path="call_function" type="fn(&self, module: &str, nid: u32, args: &[u64]) -> Option<i64>">
+  Calls a function by module and NID with automatic logging.
+  
+  ```rust
+  let args = [0x10000, 0x100000, 0, 0, 0, 0, 0, 0];
+  if let Some(result) = registry.call_function("cellGcmSys", 0x21AC3697, &args) {
+      println!("cellGcmInit returned: 0x{:x}", result);
+  }
+  ```
+</ParamField>
+
+## HleDispatcher
+
+Dispatches HLE function calls from stub addresses.
+
+### Global access
+
+```rust
+use oc_hle::{get_dispatcher, get_dispatcher_mut, dispatch_hle_call};
+
+// Get dispatcher
+let dispatcher = get_dispatcher();
+println!("Registered stubs: {}", dispatcher.stub_count());
+
+// Register a new function
+get_dispatcher_mut().register_function("mymodule", "myfunction", my_handler);
+
+// Dispatch a call
+let args = [0, 0, 0, 0, 0, 0, 0, 0];
+if let Some(result) = dispatch_hle_call(stub_addr, &args, toc, lr) {
+    println!("Function returned: {}", result);
+}
+```
+
+### Registration
+
+<ParamField path="register_function" type="fn(&mut self, module: &'static str, name: &'static str, handler: HleFn) -> u32">
+  Registers a new HLE function and returns its stub address.
+  
+  ```rust
+  fn my_handler(ctx: &HleCallContext) -> i64 {
+      println!("Called with args: {:?}", ctx.args);
+      0  // CELL_OK
+  }
+  
+  let stub_addr = get_dispatcher_mut().register_function(
+      "mymodule",
+      "myfunction",
+      my_handler,
+  );
+  
+  println!("Function registered at stub 0x{:08x}", stub_addr);
+  ```
+</ParamField>
+
+<ParamField path="register_stub" type="fn(&mut self, stub_addr: u32, info: HleFunctionInfo)">
+  Registers a stub address with function info.
+</ParamField>
+
+<ParamField path="register_generic_stub" type="fn(&mut self, stub_addr: u32, desc_addr: u32)">
+  Registers a generic stub that returns CELL_OK for unimplemented imports.
+</ParamField>
+
+### Dispatch
+
+<ParamField path="dispatch" type="fn(&mut self, ctx: &HleCallContext) -> Option<i64>">
+  Dispatches an HLE function call.
+  
+  ```rust
+  use oc_hle::HleCallContext;
+  
+  let ctx = HleCallContext {
+      stub_addr: 0x2F000000,
+      args: [0x10000, 0x1000, 0, 0, 0, 0, 0, 0],
+      toc: 0,
+      lr: 0x12345678,
+  };
+  
+  if let Some(result) = get_dispatcher_mut().dispatch(&ctx) {
+      println!("Returned: 0x{:x}", result);
+  }
+  ```
+</ParamField>
+
+<ParamField path="is_hle_stub" type="fn(&self, addr: u32) -> bool">
+  Checks if an address is a registered HLE stub.
+  
+  ```rust
+  if get_dispatcher().is_hle_stub(pc) {
+      println!("PC is at HLE stub");
+  }
+  ```
+</ParamField>
+
+## HleContext
+
+Global context for HLE subsystems (graphics, input, audio, etc.).
+
+### Access
+
+```rust
+use oc_hle::{get_hle_context, get_hle_context_mut};
+
+// Read-only access
+let ctx = get_hle_context();
+println!("GCM initialized: {}", ctx.gcm.is_initialized());
+
+// Mutable access
+let ctx = get_hle_context_mut();
+ctx.gcm.init(0x10000000, 0x100000);
+```
+
+### Bridge setup
+
+<ParamField path="set_rsx_bridge" type="fn(sender: RsxBridgeSender)">
+  Sets the RSX bridge for cellGcm HLE.
+  
+  ```rust
+  use oc_core::create_rsx_bridge;
+  use oc_hle::set_rsx_bridge;
+  
+  let (sender, receiver) = create_rsx_bridge();
+  set_rsx_bridge(sender);
+  // Pass receiver to RSX thread
+  ```
+</ParamField>
+
+<ParamField path="has_rsx_bridge" type="fn() -> bool">
+  Checks if RSX bridge is configured.
+</ParamField>
+
+<ParamField path="set_spu_bridge" type="fn(sender: SpuBridgeSender)">
+  Sets the SPU bridge for SPU management HLE.
+</ParamField>
+
+<ParamField path="set_input_backend" type="fn(backend: Arc<dyn InputBackend>)">
+  Sets the input backend for cellPad/cellKb/cellMouse.
+</ParamField>
+
+<ParamField path="set_audio_backend" type="fn(backend: Arc<dyn AudioBackend>)">
+  Sets the audio backend for cellAudio.
+</ParamField>
+
+## Memory utilities
+
+HLE memory utilities for reading/writing guest memory.
+
+<ParamField path="init_hle_memory" type="fn(memory: Arc<MemoryManager>)">
+  Initializes HLE memory access.
+  
+  ```rust
+  use oc_hle::init_hle_memory;
+  use oc_memory::MemoryManager;
+  
+  let memory = MemoryManager::new()?;
+  init_hle_memory(memory);
+  ```
+</ParamField>
+
+<ParamField path="read_be32" type="fn(addr: u32) -> Result<u32, String>">
+  Reads a 32-bit big-endian value from guest memory.
+  
+  ```rust
+  use oc_hle::read_be32;
+  
+  let value = read_be32(0x10000)?;
+  println!("Value: 0x{:08x}", value);
+  ```
+</ParamField>
+
+<ParamField path="write_be32" type="fn(addr: u32, value: u32) -> Result<(), String>">
+  Writes a 32-bit big-endian value to guest memory.
+</ParamField>
+
+<ParamField path="read_string" type="fn(addr: u32) -> Result<String, String>">
+  Reads a null-terminated string from guest memory.
+  
+  ```rust
+  use oc_hle::read_string;
+  
+  let path = read_string(0x10000)?;
+  println!("Path: {}", path);
+  ```
+</ParamField>
+
+<ParamField path="write_string" type="fn(addr: u32, s: &str) -> Result<(), String>">
+  Writes a null-terminated string to guest memory.
+</ParamField>
+
+<ParamField path="is_valid_pointer" type="fn(addr: u32) -> bool">
+  Checks if an address is a valid pointer.
+  
+  ```rust
+  use oc_hle::is_valid_pointer;
+  
+  if is_valid_pointer(buffer_addr) {
+      // Safe to read/write
+  }
+  ```
+</ParamField>
+
+## Implemented modules
+
+The following PS3 system libraries have HLE implementations:
+
+### Graphics
+
+- **cellGcmSys** - RSX graphics (cellGcmInit, cellGcmSetFlipMode, etc.)
+- **cellResc** - Resolution scaling
+- **cellGifDec** - GIF image decoder
+- **cellPngDec** - PNG image decoder
+- **cellJpgDec** - JPEG image decoder
+
+### System
+
+- **cellSysutil** - System utilities (callbacks, system parameters)
+- **cellGame** - Game data management
+- **cellSaveData** - Save data management
+
+### Multimedia
+
+- **cellDmux** - Demuxer
+- **cellVdec** - Video decoder
+- **cellAdec** - Audio decoder
+- **cellVpost** - Video post-processing
+
+### Network
+
+- **cellNetCtl** - Network control
+- **cellHttp** - HTTP client
+- **cellSsl** - SSL/TLS
+
+### Input
+
+- **cellPad** - Controller input
+- **cellKb** - Keyboard input
+- **cellMouse** - Mouse input
+- **cellMic** - Microphone input
+
+### Other
+
+- **cellFont** - Font rendering
+- **cellFontFT** - FreeType font rendering
+- **cellSpurs** - SPURS task scheduling
+- **cellAudio** - Audio output
+- **cellFs** - File system
+
+## Types
+
+### HleFn
+
+<ResponseField name="HleFn" type="type">
+  HLE function signature
+  
+  ```rust
+  pub type HleFn = fn(&HleCallContext) -> i64;
+  ```
+</ResponseField>
+
+### HleCallContext
+
+<ResponseField name="HleCallContext" type="struct">
+  Context passed to HLE functions
+  
+  ```rust
+  pub struct HleCallContext {
+      pub stub_addr: u32,        // Stub address called
+      pub args: [u64; 8],        // Arguments (R3-R10)
+      pub toc: u64,              // TOC (R2)
+      pub lr: u64,               // Link register (return address)
+  }
+  ```
+</ResponseField>
+
+### HleFunctionInfo
+
+<ResponseField name="HleFunctionInfo" type="struct">
+  Information about an HLE function
+  
+  ```rust
+  pub struct HleFunctionInfo {
+      pub name: &'static str,
+      pub module: &'static str,
+      pub handler: HleFn,
+  }
+  ```
+</ResponseField>
+
+### NidInfo
+
+<ResponseField name="NidInfo" type="struct">
+  NID metadata for a function
+  
+  ```rust
+  pub struct NidInfo {
+      pub nid: u32,
+      pub name: &'static str,
+      pub implemented: bool,     // True if real handler, false if stub
+  }
+  ```
+</ResponseField>
+
+## Error codes
+
+Common PS3 error codes:
+
+```rust
+use oc_hle::dispatcher::error::*;
+
+pub const CELL_OK: i64 = 0;
+pub const CELL_CANCEL: i64 = 1;
+pub const CELL_EFAULT: i64 = 0x80010002u32 as i64;
+pub const CELL_EINVAL: i64 = 0x80010003u32 as i64;
+pub const CELL_ENOMEM: i64 = 0x80010004u32 as i64;
+pub const CELL_ENOENT: i64 = 0x80010006u32 as i64;
+pub const CELL_EBUSY: i64 = 0x8001000Au32 as i64;
+pub const CELL_ENOTINIT: i64 = 0x80010013u32 as i64;
+```
+
+## Example: Custom HLE function
+
+```rust
+use oc_hle::{get_dispatcher_mut, HleCallContext};
+use oc_hle::dispatcher::error::*;
+
+// Define handler
+fn my_custom_function(ctx: &HleCallContext) -> i64 {
+    let param1 = ctx.args[0] as u32;
+    let param2 = ctx.args[1] as u32;
+    
+    println!("my_custom_function({}, {})", param1, param2);
+    
+    // Do work...
+    
+    CELL_OK  // Return success
+}
+
+// Register
+let stub_addr = get_dispatcher_mut().register_function(
+    "mylib",
+    "my_custom_function",
+    my_custom_function,
+);
+
+println!("Registered at 0x{:08x}", stub_addr);
+```
+
+## Example: Reading function arguments
+
+```rust
+use oc_hle::{HleCallContext, read_be32, read_string, is_valid_pointer};
+use oc_hle::dispatcher::error::*;
+
+fn cell_fs_open(ctx: &HleCallContext) -> i64 {
+    // R3: path pointer
+    // R4: flags
+    // R5: fd pointer
+    // R6: mode
+    
+    let path_ptr = ctx.args[0] as u32;
+    let flags = ctx.args[1] as i32;
+    let fd_ptr = ctx.args[2] as u32;
+    let mode = ctx.args[3] as i32;
+    
+    // Validate pointers
+    if !is_valid_pointer(path_ptr) || !is_valid_pointer(fd_ptr) {
+        return CELL_EFAULT;
+    }
+    
+    // Read string argument
+    let path = match read_string(path_ptr) {
+        Ok(s) => s,
+        Err(_) => return CELL_EFAULT,
+    };
+    
+    println!("cellFsOpen(\"{}\", 0x{:x}, 0x{:08x}, 0x{:x})",
+             path, flags, fd_ptr, mode);
+    
+    // Open file and get fd
+    let fd = 3;  // Example fd
+    
+    // Write fd to guest memory
+    if let Err(_) = write_be32(fd_ptr, fd) {
+        return CELL_EFAULT;
+    }
+    
+    CELL_OK
+}
+```

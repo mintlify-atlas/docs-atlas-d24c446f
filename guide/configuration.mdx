@@ -1,0 +1,366 @@
+---
+title: Configuration
+description: Configure oxidized-cell emulator settings and options
+---
+
+The oxidized-cell emulator uses a TOML configuration file to store all settings. The configuration file is automatically created on first run with sensible defaults.
+
+## Configuration file location
+
+The configuration file is stored at:
+
+- **Linux**: `~/.config/oxidized-cell/config.toml`
+- **Windows**: `%APPDATA%\oxidized-cell\config.toml`
+- **macOS**: `~/Library/Application Support/oxidized-cell/config.toml`
+
+You can edit this file directly with any text editor, or modify settings through the emulator's user interface.
+
+## Configuration structure
+
+The configuration file is organized into several sections:
+
+<Accordion title="General settings">
+
+Control basic emulator behavior:
+
+```toml config.toml
+[general]
+start_paused = false      # Start emulation in paused state
+confirm_exit = true       # Show confirmation dialog when exiting
+auto_save_state = false   # Automatically save state on exit
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `start_paused` | `false` | Start emulation paused (useful for debugging) |
+| `confirm_exit` | `true` | Show confirmation dialog before exiting |
+| `auto_save_state` | `false` | Automatically save emulation state on exit |
+
+</Accordion>
+
+<Accordion title="CPU settings">
+
+Configure PPU and SPU emulation behavior:
+
+```toml config.toml
+[cpu]
+ppu_decoder = "Recompiler"     # Options: "Interpreter", "Recompiler"
+spu_decoder = "Recompiler"     # Options: "Interpreter", "Recompiler"
+ppu_threads = 2                # Number of PPU threads (1-8)
+spu_threads = 6                # Number of SPU threads (1-6)
+accurate_dfma = false          # Accurate fused multiply-add
+accurate_rsx_reservation = false  # Accurate RSX memory reservations
+spu_loop_detection = true      # Detect and optimize SPU loops
+cycle_accurate_timing = false  # Cycle-accurate timing (slower)
+pipeline_simulation = false    # Simulate CPU pipeline (slower)
+power_management = false       # Emulate power management
+cache_simulation = false       # Simulate CPU caches (slower)
+memory_profiling = false       # Enable memory access profiling
+```
+
+### Decoder options
+
+<Note>
+**Recompiler** mode is recommended for better performance. Use **Interpreter** mode for debugging or if you encounter compatibility issues.
+</Note>
+
+- **Interpreter**: Executes instructions one at a time. Slower but more accurate.
+- **Recompiler**: Uses LLVM JIT compilation for 20x-50x better performance.
+
+### Thread configuration
+
+- **ppu_threads**: Number of PPU hardware threads (2 on real PS3)
+- **spu_threads**: Number of available SPUs (6 on real PS3)
+
+### Accuracy options
+
+<Warning>
+Enabling accuracy options significantly reduces performance. Only enable these if a game requires them.
+</Warning>
+
+- **accurate_dfma**: Precise floating-point fused multiply-add emulation
+- **accurate_rsx_reservation**: Accurate memory reservation for RSX operations
+- **spu_loop_detection**: Detect tight SPU loops and optimize them (recommended: enabled)
+- **cycle_accurate_timing**: Emulate timing at the cycle level (very slow)
+- **pipeline_simulation**: Emulate CPU pipeline stages (very slow)
+
+</Accordion>
+
+<Accordion title="GPU settings">
+
+Configure graphics rendering:
+
+```toml config.toml
+[gpu]
+backend = "Vulkan"          # Options: "Vulkan", "Null"
+resolution_scale = 100      # Resolution multiplier (100 = native, 200 = 2x)
+anisotropic_filter = 8      # Anisotropic filtering level (1, 2, 4, 8, 16)
+vsync = true                # Enable vertical sync
+frame_limit = 60            # Frame rate limit (0 = unlimited)
+shader_cache = true         # Cache compiled shaders
+write_color_buffers = false # Write to color buffers (compatibility)
+write_depth_buffer = false  # Write to depth buffer (compatibility)
+```
+
+### Backend options
+
+- **Vulkan**: High-performance graphics API (recommended)
+- **Null**: No rendering (for testing/debugging)
+
+### Resolution scaling
+
+<Note>
+Higher resolution scales improve image quality but require more GPU power. Start with 100% and increase if your system can handle it.
+</Note>
+
+- `100` = Native PS3 resolution (720p)
+- `150` = 1.5x native resolution
+- `200` = 2x native resolution (1440p)
+- `300` = 3x native resolution (4K)
+
+### Graphics options
+
+- **anisotropic_filter**: Improves texture quality at oblique angles (1-16)
+- **vsync**: Synchronize frame rate with display refresh rate
+- **frame_limit**: Cap frame rate (0 for unlimited)
+- **shader_cache**: Cache compiled shaders for faster loading
+
+</Accordion>
+
+<Accordion title="Audio settings">
+
+Configure audio output:
+
+```toml config.toml
+[audio]
+backend = "Auto"          # Options: "Auto", "Null"
+enable = true             # Enable audio output
+volume = 1.0              # Volume level (0.0 - 1.0)
+buffer_duration_ms = 100  # Audio buffer size in milliseconds
+time_stretching = true    # Enable time stretching
+```
+
+### Audio options
+
+- **backend**: Audio backend (`Auto` selects the best available)
+- **enable**: Master audio enable/disable
+- **volume**: Volume level from 0.0 (silent) to 1.0 (full)
+- **buffer_duration_ms**: Audio buffer size (higher = more latency, fewer dropouts)
+- **time_stretching**: Adjust audio speed to match emulation speed
+
+<Note>
+If you experience audio crackling, try increasing `buffer_duration_ms` to 150 or 200.
+</Note>
+
+</Accordion>
+
+<Accordion title="Input settings">
+
+Configure controller and keyboard input:
+
+```toml config.toml
+[input]
+
+[input.controller]
+player1 = "Controller 1"  # Controller name for player 1
+player2 = null
+player3 = null
+player4 = null
+
+[input.keyboard_mapping]
+cross = "X"
+circle = "C"
+square = "Z"
+triangle = "V"
+l1 = "Q"
+l2 = "1"
+l3 = "F"
+r1 = "E"
+r2 = "3"
+r3 = "G"
+start = "Return"
+select = "Backspace"
+dpad_up = "Up"
+dpad_down = "Down"
+dpad_left = "Left"
+dpad_right = "Right"
+```
+
+### Keyboard mapping
+
+You can customize keyboard controls by editing the key names. Use standard key names like:
+- Letter keys: `"A"`, `"B"`, `"C"`, etc.
+- Number keys: `"1"`, `"2"`, `"3"`, etc.
+- Special keys: `"Space"`, `"Return"`, `"Escape"`, `"Tab"`, etc.
+- Arrow keys: `"Up"`, `"Down"`, `"Left"`, `"Right"`
+- Function keys: `"F1"`, `"F2"`, etc.
+
+</Accordion>
+
+<Accordion title="Path settings">
+
+Configure file system paths:
+
+```toml config.toml
+[paths]
+games = "/home/user/.local/share/oxidized-cell/games"
+dev_hdd0 = "/home/user/.local/share/oxidized-cell/dev_hdd0"
+dev_hdd1 = "/home/user/.local/share/oxidized-cell/dev_hdd1"
+dev_flash = "/home/user/.local/share/oxidized-cell/dev_flash"
+save_data = "/home/user/.local/share/oxidized-cell/savedata"
+shader_cache = "/home/user/.local/share/oxidized-cell/cache/shaders"
+firmware = "/home/user/.local/share/oxidized-cell/firmware"
+```
+
+### Path descriptions
+
+- **games**: Default directory for game files
+- **dev_hdd0**: Emulated internal hard drive (system files, game data)
+- **dev_hdd1**: Emulated secondary hard drive
+- **dev_flash**: PS3 firmware files (extracted from PUP file)
+- **save_data**: Game save files
+- **shader_cache**: Cached compiled shaders
+- **firmware**: Firmware files (PS3UPDAT.PUP)
+
+<Note>
+Paths are automatically created on first run. You can change them to organize your files differently.
+</Note>
+
+</Accordion>
+
+<Accordion title="Debug settings">
+
+Configure debugging and logging:
+
+```toml config.toml
+[debug]
+log_level = "Info"        # Options: "Off", "Error", "Warn", "Info", "Debug", "Trace"
+log_to_file = false       # Write logs to file
+log_path = "oxidized-cell.log"  # Log file path
+dump_shaders = false      # Dump shaders to files
+trace_ppu = false         # Enable PPU instruction tracing
+trace_spu = false         # Enable SPU instruction tracing
+trace_rsx = false         # Enable RSX command tracing
+breakpoints = []          # List of breakpoint addresses
+```
+
+### Log levels
+
+- **Off**: No logging
+- **Error**: Critical errors only
+- **Warn**: Warnings and errors
+- **Info**: General information (recommended)
+- **Debug**: Detailed debugging information
+- **Trace**: Very verbose output (all instructions)
+
+<Warning>
+**Trace** mode generates massive log files and significantly impacts performance. Only use it for debugging specific issues.
+</Warning>
+
+### Tracing options
+
+- **trace_ppu**: Log every PPU instruction executed
+- **trace_spu**: Log every SPU instruction executed
+- **trace_rsx**: Log every RSX command processed
+- **dump_shaders**: Save shader source code to files
+
+### Breakpoints
+
+You can set execution breakpoints by adding addresses to the array:
+
+```toml
+breakpoints = [0x10000, 0x20000, 0x30000]
+```
+
+</Accordion>
+
+## Example configuration
+
+Here's a complete example configuration optimized for performance:
+
+```toml config.toml
+[general]
+start_paused = false
+confirm_exit = true
+auto_save_state = false
+
+[cpu]
+ppu_decoder = "Recompiler"
+spu_decoder = "Recompiler"
+ppu_threads = 2
+spu_threads = 6
+accurate_dfma = false
+accurate_rsx_reservation = false
+spu_loop_detection = true
+cycle_accurate_timing = false
+pipeline_simulation = false
+power_management = false
+cache_simulation = false
+memory_profiling = false
+
+[gpu]
+backend = "Vulkan"
+resolution_scale = 100
+anisotropic_filter = 8
+vsync = true
+frame_limit = 60
+shader_cache = true
+write_color_buffers = false
+write_depth_buffer = false
+
+[audio]
+backend = "Auto"
+enable = true
+volume = 1.0
+buffer_duration_ms = 100
+time_stretching = true
+
+[debug]
+log_level = "Info"
+log_to_file = false
+log_path = "oxidized-cell.log"
+dump_shaders = false
+trace_ppu = false
+trace_spu = false
+trace_rsx = false
+breakpoints = []
+```
+
+## Resetting configuration
+
+If you encounter issues with your configuration:
+
+<Steps>
+  <Step title="Locate the config file">
+    Find `config.toml` in your platform's config directory.
+  </Step>
+  
+  <Step title="Delete or rename the file">
+    Delete `config.toml` or rename it to `config.toml.backup`.
+  </Step>
+  
+  <Step title="Restart the emulator">
+    The emulator will automatically create a new config file with default values.
+  </Step>
+</Steps>
+
+## Command-line configuration
+
+You can override configuration options from the command line:
+
+```bash
+# Use interpreter mode
+cargo run --release -- --ppu-decoder interpreter
+
+# Set log level
+cargo run --release -- --log-level debug
+
+# Disable audio
+cargo run --release -- --no-audio
+```
+
+For a complete list of command-line options:
+
+```bash
+cargo run --release -- --help
+```

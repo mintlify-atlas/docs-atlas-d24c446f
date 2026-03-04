@@ -1,0 +1,541 @@
+---
+title: SPU (Synergistic Processing Unit)
+description: Cell BE SPU emulation with 256KB local storage, 128 SIMD registers, and DMA via Memory Flow Controller
+---
+
+The SPU (Synergistic Processing Unit) is a specialized SIMD processor in the Cell Broadband Engine. The PS3 has 6 usable SPUs (8 total, 1 disabled, 1 reserved for OS). Each SPU has its own 256KB local storage and communicates with main memory through DMA.
+
+## Overview
+
+The SPU emulator (`oc-spu` crate) provides:
+
+- **256KB Local Storage**: Private memory accessible only by the SPU
+- **128 Vector Registers**: 128-bit SIMD registers for parallel processing
+- **Memory Flow Controller (MFC)**: DMA engine for efficient data transfer
+- **SPU Channels**: Communication and synchronization primitives
+- **Thread Groups**: Manage multiple SPU threads as a unit
+- **Isolation Mode**: Secure execution for cryptographic operations
+
+## Architecture
+
+### Register Set
+
+Each SPU has 128 general-purpose 128-bit registers:
+
+```rust
+pub struct SpuRegisters {
+    pub gpr: [[u32; 4]; 128],  // 128 x 128-bit registers
+    pub pc: u32,                // Program counter
+}
+
+// Each register holds 4 x 32-bit words
+let vec = thread.regs.read_u32x4(0);  // [u32; 4]
+thread.regs.write_u32x4(0, [1, 2, 3, 4]);
+```
+
+### Local Storage
+
+Each SPU has 256KB of private memory:
+
+```rust
+pub const SPU_LS_SIZE: usize = 256 * 1024;
+
+// Read/write to local storage
+let value = thread.ls_read_u32(0x100);
+thread.ls_write_u32(0x100, 0x12345678);
+
+// 128-bit operations (16-byte aligned)
+let vec = thread.ls_read_u128(0x100);
+thread.ls_write_u128(0x100, [1, 2, 3, 4]);
+```
+
+<Note>
+Local storage addresses wrap at 256KB boundaries. Addresses are automatically masked.
+</Note>
+
+## Thread Management
+
+### Creating SPU Threads
+
+```rust
+use oc_spu::{SpuThread, SpuPriority};
+
+let thread = SpuThread::new_with_config(
+    spu_id,
+    memory.clone(),
+    0x1000,              // Entry point in LS
+    0xDEADBEEF,         // Argument
+    SpuPriority::HIGH
+);
+```
+
+### Thread States
+
+SPU threads have specific states:
+
+- **Stopped**: Not running
+- **Running**: Actively executing
+- **Ready**: Ready to run
+- **Waiting**: Waiting on channel
+- **Halted**: Stopped by halt instruction
+- **Exception**: Exception pending
+- **Isolated**: Running in isolation mode
+
+### Priority Levels
+
+SPU priority ranges from 0-255 (lower = higher priority):
+
+```rust
+SpuPriority::HIGHEST  // 0
+SpuPriority::HIGH     // 64
+SpuPriority::NORMAL   // 128 (default)
+SpuPriority::LOW      // 192
+SpuPriority::LOWEST   // 255
+
+thread.set_priority(SpuPriority::HIGH);
+```
+
+### Affinity
+
+Control which physical SPU a thread runs on:
+
+```rust
+use oc_spu::SpuAffinity;
+
+// Run on any available SPU (bits 0-5 for 6 SPUs)
+thread.set_affinity(SpuAffinity::ANY);
+
+// Run on specific SPU
+thread.set_affinity(SpuAffinity::specific(2));  // SPU 2 only
+
+if thread.can_run_on_spu(2) {
+    println!("Can run on SPU 2");
+}
+```
+
+## Memory Flow Controller (MFC)
+
+The MFC handles DMA transfers between local storage and main memory.
+
+### DMA Commands
+
+```rust
+use oc_spu::{Mfc, MfcCommand, MfcDmaCommand};
+
+let mut mfc = Mfc::new();
+
+// Queue a GET command (main memory -> local storage)
+let cmd = MfcDmaCommand {
+    lsa: 0x1000,           // Local storage address
+    ea: 0x10000000,        // Effective address (main memory)
+    size: 16384,           // Transfer size
+    tag: 0,                // Tag ID (0-31)
+    cmd: MfcCommand::Get,
+    issue_cycle: 0,
+    completion_cycle: 0,
+};
+
+mfc.queue_command(cmd);
+```
+
+### Command Types
+
+<Tabs>
+  <Tab title="GET Commands">
+    Transfer data from main memory to local storage:
+    
+    - `Get` - Basic get
+    - `GetB` - Get with barrier
+    - `GetF` - Get with fence
+    - `GetL` - Get list (multiple transfers)
+    - `GetLLAR` - Get lock line (atomic reservation)
+  </Tab>
+  
+  <Tab title="PUT Commands">
+    Transfer data from local storage to main memory:
+    
+    - `Put` - Basic put
+    - `PutB` - Put with barrier
+    - `PutF` - Put with fence  
+    - `PutL` - Put list (multiple transfers)
+    - `PutLLC` - Put lock line conditional (atomic store)
+  </Tab>
+  
+  <Tab title="Control">
+    Synchronization and control:
+    
+    - `Barrier` - Wait for all previous transfers
+    - List stall-and-notify for fine-grained control
+  </Tab>
+</Tabs>
+
+### DMA Timing
+
+The MFC models realistic transfer latencies:
+
+```rust
+// Base latencies (in cycles)
+MfcCommand::Get       // 100 cycles
+MfcCommand::Put       // 80 cycles
+MfcCommand::GetL      // 150 cycles (list overhead)
+
+// Transfer latency: 10 cycles per 128-byte block
+let latency = cmd.cmd.transfer_latency(size);
+```
+
+### Tag Management
+
+DMA operations are tagged (0-31) for tracking:
+
+```rust
+// Queue multiple operations with same tag
+mfc.queue_command(cmd1);  // tag 0
+mfc.queue_command(cmd2);  // tag 0
+
+// Wait for tag completion
+mfc.wait_tag_complete(0);
+
+// Check tag status
+let complete = mfc.is_tag_complete(0);
+```
+
+### List DMA
+
+List commands transfer multiple non-contiguous blocks:
+
+```rust
+use oc_spu::MfcListElement;
+
+// Each list element is 8 bytes in LS
+let elements = vec![
+    MfcListElement {
+        lsa: 0x1000,
+        size: 1024,
+        stall_notify: false,
+    },
+    MfcListElement {
+        lsa: 0x2000,
+        size: 2048,
+        stall_notify: true,  // SPU stalls after this
+    },
+];
+
+// Queue list transfer
+mfc.queue_list_transfer(
+    list_addr,         // Address of list in LS
+    ea_base,          // Base address in main memory
+    tag,
+    MfcCommand::GetL
+);
+```
+
+### Atomic Operations
+
+MFC supports atomic reservations:
+
+```rust
+// Reserve cache line (GetLLAR)
+mfc.atomic_reserve(ea, lsa);
+
+// Conditional store (PutLLC)
+// Succeeds only if reservation still valid
+let success = mfc.atomic_store_conditional(ea, lsa);
+```
+
+## SPU Channels
+
+Channels provide communication between SPU and PPU:
+
+### Channel Types
+
+- **SPU_RdEventStat**: Read event status
+- **SPU_WrEventMask**: Write event mask
+- **SPU_WrEventAck**: Acknowledge events
+- **SPU_RdSigNotify1/2**: Read signal notification
+- **SPU_WrOutMbox**: Write to outbound mailbox
+- **SPU_RdInMbox**: Read from inbound mailbox
+- **SPU_WrOutIntrMbox**: Write with interrupt
+- **MFC_Cmd**: Issue MFC command
+- **MFC_WrTagMask**: Set tag mask
+- **MFC_RdTagStat**: Read tag status
+- **MFC_RdListStallStat**: Read list stall status
+- **MFC_WrListStallAck**: Acknowledge list stall
+
+### Channel Operations
+
+```rust
+use oc_spu::SpuChannels;
+
+let mut channels = SpuChannels::new();
+
+// Read from channel (blocking if empty)
+if let Some(value) = channels.read(channel_id) {
+    println!("Read: {}", value);
+}
+
+// Write to channel
+channels.write(channel_id, value);
+
+// Check channel status
+let count = channels.get_count(channel_id);
+let can_read = count > 0;
+```
+
+## Thread Groups
+
+SPU threads are managed in groups:
+
+```rust
+use oc_spu::{SpuThreadGroup, SpuGroupState};
+use oc_spu::MAX_SPU_THREADS_PER_GROUP;  // 8
+
+let mut group = SpuThreadGroup::new(
+    group_id,
+    "my_group",
+    4,                    // Number of threads
+    SpuPriority::NORMAL
+);
+
+// Add threads to group
+group.add_thread(thread_id_0);
+group.add_thread(thread_id_1);
+
+// Control group
+group.start();
+group.suspend();
+group.resume();
+group.stop();
+
+// Attach event queue for notifications
+group.attach_event_queue(queue_id);
+```
+
+### Group States
+
+- **NotInitialized**: Not yet set up
+- **Initialized**: Ready to start
+- **Running**: All threads running
+- **Waiting**: All threads waiting
+- **Suspended**: Group suspended
+- **Stopped**: All threads stopped
+
+## Event Queue
+
+Event queues collect notifications from SPU threads:
+
+```rust
+use oc_spu::{SpuEventQueue, SpuEvent, SpuEventType};
+
+let mut queue = SpuEventQueue::new(queue_id, 64);
+
+// Push event
+let event = SpuEvent {
+    source: spu_id,
+    data: stop_signal_value,
+    event_type: SpuEventType::StopSignal,
+};
+queue.push(event);
+
+// Pop event (FIFO)
+if let Some(event) = queue.pop() {
+    match event.event_type {
+        SpuEventType::ThreadFinish => {},
+        SpuEventType::StopSignal => {},
+        SpuEventType::DmaComplete => {},
+        _ => {}
+    }
+}
+
+// PPU threads can wait on queue
+queue.add_waiter(ppu_thread_id);
+```
+
+## Isolation Mode
+
+Isolation mode provides secure execution:
+
+```rust
+// Enter isolation mode
+thread.enter_isolation();
+
+if thread.is_isolated() {
+    // Local storage is encrypted and protected
+    // PPU cannot access LS or registers
+    // Used for SPU security modules
+}
+
+// Exit isolation mode
+thread.exit_isolation();
+```
+
+<Info>
+Isolation mode is used by the PS3 for secure operations like decryption and authentication.
+</Info>
+
+## Exception Handling
+
+### Exception Types
+
+```rust
+use oc_spu::SpuExceptionType;
+
+// Raise exception
+thread.raise_exception(SpuExceptionType::InvalidInstruction);
+thread.raise_exception(SpuExceptionType::DmaError);
+thread.raise_exception(SpuExceptionType::ChannelError);
+thread.raise_exception(SpuExceptionType::StopSignal(0x42));
+
+// Check and clear
+if thread.exceptions.has_exception() {
+    let pc = thread.exceptions.exception_pc;
+    thread.clear_exception();
+}
+```
+
+### Stop and Signal
+
+SPU programs use stop-and-signal for communication:
+
+```rust
+// Stop instruction with signal value
+thread.raise_exception(
+    SpuExceptionType::StopSignal(0x1234)
+);
+
+let signal = thread.stop_signal;  // 0x1234
+```
+
+## Performance Features
+
+### Cycle Counting
+
+```rust
+// Track execution cycles
+thread.add_cycles(1);
+
+let total_cycles = thread.cycles;
+```
+
+### Preferred Slot
+
+SPU instructions operate on "preferred slot" (word 0):
+
+```rust
+// Read preferred slot
+let value = thread.regs.read_preferred_u32(5);
+
+// Write to preferred slot (zeros other slots)
+thread.regs.write_preferred_u32(5, 0x12345678);
+// Result: [0x12345678, 0, 0, 0]
+```
+
+## SIMD Operations
+
+SPU is designed for SIMD parallel processing:
+
+- **Arithmetic**: Add, subtract, multiply (integer and float)
+- **Comparison**: Greater than, equal, etc.
+- **Logical**: AND, OR, XOR, shift, rotate
+- **Shuffle**: Permute and select operations
+- **Conversion**: Between integer and float formats
+
+```rust
+// All operations work on 128-bit vectors
+let a = thread.regs.read_u32x4(1);  // [a0, a1, a2, a3]
+let b = thread.regs.read_u32x4(2);  // [b0, b1, b2, b3]
+
+// Parallel operation
+// result = [a0+b0, a1+b1, a2+b2, a3+b3]
+thread.regs.write_u32x4(3, result);
+```
+
+## Program Counter
+
+```rust
+// PC is relative to local storage (max 256KB)
+let pc = thread.pc();           // Get PC
+thread.set_pc(0x1000);         // Set PC (auto-wraps)
+thread.advance_pc();           // PC += 4
+```
+
+## Atomics
+
+SPU atomic operations are implemented through MFC:
+
+```rust
+use oc_spu::atomics;
+
+// Atomic compare-and-swap
+atomics::atomic_cas(thread, ea, lsa, size);
+
+// Atomic operations use GetLLAR/PutLLC
+```
+
+## Usage Example
+
+```rust
+use oc_spu::{SpuThread, SpuPriority, Mfc, MfcCommand};
+use std::sync::Arc;
+
+// Create SPU thread
+let memory = Arc::new(MemoryManager::new().unwrap());
+let mut thread = SpuThread::new(0, memory.clone());
+
+// Load SPU program into local storage
+let program = load_spu_binary("program.elf");
+for (i, byte) in program.iter().enumerate() {
+    thread.local_storage[i] = *byte;
+}
+
+// Set entry point
+thread.set_pc(0);
+
+// Configure and start
+thread.set_priority(SpuPriority::HIGH);
+thread.start();
+
+// DMA transfer example
+let mut cmd = MfcDmaCommand {
+    lsa: 0x1000,
+    ea: 0x10000000,
+    size: 16384,
+    tag: 0,
+    cmd: MfcCommand::Get,
+    issue_cycle: 0,
+    completion_cycle: 0,
+};
+
+thread.mfc.queue_command(cmd);
+
+// Execute SPU instructions
+// (interpreter/JIT executes from local storage)
+```
+
+## Implementation Details
+
+### Source Location
+
+SPU implementation: `crates/oc-spu/src/`
+
+- `lib.rs` - Module exports
+- `thread.rs` - Thread state (oc-spu/src/thread.rs:1)
+- `interpreter.rs` - Instruction interpreter
+- `decoder.rs` - Instruction decoder
+- `mfc.rs` - Memory Flow Controller (oc-spu/src/mfc.rs:1)
+- `channels.rs` - SPU channels
+- `atomics.rs` - Atomic operations
+- `instructions/` - Instruction implementations
+
+### Dependencies
+
+```toml
+[dependencies]
+oc-core = { workspace = true }
+oc-memory = { workspace = true }
+```
+
+## See Also
+
+- [PPU Component](ppu) - PowerPC processor
+- [LV2 Kernel](lv2-kernel) - SPU syscalls
+- [Memory Component](../architecture/memory) - Memory management

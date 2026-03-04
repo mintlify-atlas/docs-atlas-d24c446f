@@ -1,0 +1,248 @@
+---
+title: RSX graphics
+description: Reality Synthesizer graphics processor emulation with Vulkan backend
+---
+
+The RSX (Reality Synthesizer) is the PS3's graphics processor, based on NVIDIA's G70/G71 architecture. Oxidized-cell provides accurate RSX emulation with a modern Vulkan rendering backend.
+
+## Overview
+
+The RSX component (`oc-rsx`) implements:
+
+- **Command processing**: FIFO command buffer execution
+- **NV4097 methods**: Graphics method handlers for draw commands
+- **Vulkan backend**: Modern graphics API for cross-platform rendering
+- **State management**: Vertex attributes, textures, blend/depth/stencil states
+- **Multi-frame sync**: Frame pacing and synchronization
+- **Shader compilation**: Runtime shader translation
+
+<Note>
+The RSX is based on NVIDIA G70/G71 architecture, similar to GeForce 7800/7900 series GPUs.
+</Note>
+
+## Architecture
+
+```rust
+pub use backend::FramebufferData;
+pub use backend::null::NullBackend;
+pub use backend::vulkan::VulkanBackend;
+pub use state::RsxState;
+pub use thread::RsxThread;
+```
+
+The RSX component is organized into:
+
+- **thread**: RSX command processor thread
+- **backend**: Graphics backend implementations (Vulkan, Null)
+- **fifo**: Command FIFO buffer management
+- **methods**: NV4097 method handlers
+- **state**: Graphics state tracking
+- **shader**: Shader compilation and caching
+- **texture**: Texture format conversion
+- **vertex**: Vertex attribute handling
+- **buffer**: Buffer management
+- **postprocess**: Post-processing effects
+- **scaling**: Resolution scaling
+- **timing**: Frame timing and vsync
+
+## RSX thread
+
+The `RsxThread` processes graphics commands from the command FIFO:
+
+```rust
+use oc_rsx::RsxThread;
+use std::sync::Arc;
+
+// Create RSX thread with Vulkan backend
+let rsx = RsxThread::new(
+    memory.clone(),
+    backend,
+    receiver,
+);
+
+// Start command processing
+rsx.run();
+```
+
+### Command processing
+
+The RSX reads commands from the FIFO and dispatches to method handlers:
+
+1. **Read command** from FIFO buffer
+2. **Decode method** ID and parameters
+3. **Execute method** handler (draw, state change, etc.)
+4. **Update state** tracking
+5. **Submit to backend** when needed
+
+## Graphics backends
+
+### Vulkan backend
+
+The `VulkanBackend` provides high-performance rendering:
+
+```rust
+use oc_rsx::VulkanBackend;
+
+let backend = VulkanBackend::new(
+    window_handle,
+    enable_validation,
+)?;
+
+// Execute draw command
+backend.draw(
+    vertex_count,
+    instance_count,
+    first_vertex,
+    first_instance,
+)?;
+```
+
+**Features**:
+- Vulkan 1.2+ support
+- GPU memory management with gpu-allocator
+- Multi-frame command buffering
+- Async shader compilation
+- Debug validation layers
+
+### Null backend
+
+The `NullBackend` provides headless testing:
+
+```rust
+use oc_rsx::NullBackend;
+
+// No-op backend for testing
+let backend = NullBackend::new();
+```
+
+## NV4097 methods
+
+The RSX implements NV4097 graphics methods:
+
+### Draw methods
+
+<Accordion title="Draw commands">
+- **0x1808**: Set draw begin (primitive type)
+- **0x1810**: Set draw end
+- **0x1814**: Set draw arrays
+- **0x1824**: Set draw index array
+- **0x1900**: Set draw inline array
+</Accordion>
+
+### State methods
+
+<Accordion title="State commands">
+- **Vertex attributes**: 16 attribute slots, format/stride/offset
+- **Textures**: 16 texture units, format/filtering/addressing
+- **Blend state**: Equation, function, color
+- **Depth state**: Test, write, function
+- **Stencil state**: Test, operation, mask
+- **Viewport**: X, Y, width, height, near, far
+- **Scissor**: X, Y, width, height
+</Accordion>
+
+## Shader system
+
+The RSX compiles PS3 shaders to SPIR-V for Vulkan:
+
+<Tabs>
+  <Tab title="Vertex shaders">
+    PS3 vertex programs are translated to Vulkan vertex shaders with:
+    - Input attributes (position, normal, texcoord, color)
+    - Uniform buffers (transformation matrices)
+    - Output varyings (interpolated to fragment shader)
+  </Tab>
+  <Tab title="Fragment shaders">
+    PS3 fragment programs are translated to Vulkan fragment shaders with:
+    - Input varyings (from vertex shader)
+    - Texture samplers (up to 16 units)
+    - Output color (framebuffer write)
+  </Tab>
+</Tabs>
+
+### Shader cache
+
+Compiled shaders are cached to avoid recompilation:
+
+```
+~/.oxidized-cell/shader_cache/
+├── vertex/
+│   ├── abc123.spv
+│   └── def456.spv
+└── fragment/
+    ├── ghi789.spv
+    └── jkl012.spv
+```
+
+## Texture formats
+
+Supported PS3 texture formats:
+
+| Format | Description | Vulkan equivalent |
+|--------|-------------|-------------------|
+| A8R8G8B8 | 32-bit ARGB | `VK_FORMAT_B8G8R8A8_UNORM` |
+| DXT1 | BC1 compression | `VK_FORMAT_BC1_RGB_UNORM_BLOCK` |
+| DXT3 | BC2 compression | `VK_FORMAT_BC2_UNORM_BLOCK` |
+| DXT5 | BC3 compression | `VK_FORMAT_BC3_UNORM_BLOCK` |
+
+<Note>
+Texture swizzling and tiling are automatically handled during format conversion.
+</Note>
+
+## Frame synchronization
+
+The RSX provides multi-frame synchronization:
+
+```rust
+// Wait for previous frame to complete
+rsx.wait_for_flip();
+
+// Submit new frame
+rsx.flip_display(buffer_id);
+```
+
+### Vsync modes
+
+- **Immediate**: No vsync, unlimited FPS
+- **FIFO**: Vsync enabled, 60 FPS cap
+- **Mailbox**: Triple buffering, minimal latency
+
+## Performance
+
+<CardGroup cols={2}>
+  <Card title="Resolution scaling" icon="expand">
+    Render at higher resolutions for improved visual quality (1x, 2x, 4x)
+  </Card>
+  <Card title="Async compilation" icon="clock">
+    Shaders compile in background threads to avoid stuttering
+  </Card>
+  <Card title="Command buffering" icon="buffer">
+    Multi-frame command buffers reduce CPU overhead
+  </Card>
+  <Card title="Memory pooling" icon="layer-group">
+    GPU memory is pooled and reused to minimize allocations
+  </Card>
+</CardGroup>
+
+## Configuration
+
+RSX settings in `config.toml`:
+
+```toml
+[graphics]
+backend = "vulkan"           # Graphics backend
+resolution_scale = 1         # 1x, 2x, 4x
+vsync = true                 # Enable vsync
+validation_layers = false    # Vulkan validation
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/guide/configuration">
+    Graphics configuration options
+  </Card>
+  <Card title="RSX API" icon="code" href="/api/rsx">
+    RSX API reference
+  </Card>
+</CardGroup>

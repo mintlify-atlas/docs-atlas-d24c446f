@@ -1,0 +1,441 @@
+---
+title: "oc_lv2"
+description: "LV2 kernel emulation (system calls)"
+---
+
+The `oc_lv2` crate implements high-level emulation of the PS3's LV2 kernel (hypervisor) system calls.
+
+## Overview
+
+LV2 is the PS3's kernel layer that provides:
+
+- Process and thread management
+- Synchronization primitives (mutexes, condition variables, semaphores)
+- Memory management
+- File system operations
+- Timer and time management
+- SPU management
+- PRX (module) loading
+
+## SyscallHandler
+
+The main syscall dispatcher that manages kernel state and routes system calls.
+
+### Creation
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new syscall handler.
+  
+  ```rust
+  use oc_lv2::SyscallHandler;
+  
+  let handler = SyscallHandler::new();
+  ```
+</ParamField>
+
+<ParamField path="with_vfs" type="fn(vfs: Arc<VirtualFileSystem>) -> Self">
+  Creates a handler with a custom VFS.
+  
+  ```rust
+  use oc_lv2::SyscallHandler;
+  use oc_vfs::VirtualFileSystem;
+  
+  let vfs = Arc::new(VirtualFileSystem::new());
+  let handler = SyscallHandler::with_vfs(vfs);
+  ```
+</ParamField>
+
+<ParamField path="with_emulator_memory" type="fn(memory: Arc<MemoryManager>) -> Self">
+  Creates a handler with emulator memory access for reading syscall arguments.
+</ParamField>
+
+### System call dispatch
+
+<ParamField path="handle" type="fn(&self, syscall_num: u64, args: &[u64; 8]) -> Result<i64, KernelError>">
+  Handles a system call.
+  
+  ```rust
+  let args = [0, 0, 0, 0, 0, 0, 0, 0];
+  let result = handler.handle(SYS_PROCESS_GETPID, &args)?;
+  println!("Process ID: {}", result);
+  ```
+</ParamField>
+
+### Subsystem access
+
+<ParamField path="object_manager" type="fn(&self) -> &Arc<ObjectManager>">
+  Returns the object manager (for synchronization objects).
+</ParamField>
+
+<ParamField path="process_manager" type="fn(&self) -> &Arc<ProcessManager>">
+  Returns the process manager.
+</ParamField>
+
+<ParamField path="thread_manager" type="fn(&self) -> &Arc<ThreadManager>">
+  Returns the thread manager.
+</ParamField>
+
+<ParamField path="memory_manager" type="fn(&self) -> &Arc<MemoryManager>">
+  Returns the LV2 memory manager.
+</ParamField>
+
+<ParamField path="vfs" type="fn(&self) -> &Arc<VirtualFileSystem>">
+  Returns the virtual file system.
+</ParamField>
+
+## ObjectManager
+
+Manages kernel objects (mutexes, condition variables, semaphores, etc.).
+
+### Creation
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new object manager.
+</ParamField>
+
+### Object operations
+
+<ParamField path="create_object" type="fn<T: KernelObject>(&self, object: T) -> u32">
+  Creates a kernel object and returns its ID.
+  
+  ```rust
+  let mutex_id = object_manager.create_object(Mutex::new());
+  ```
+</ParamField>
+
+<ParamField path="get_object" type="fn<T: KernelObject>(&self, id: u32) -> Option<Arc<T>>">
+  Gets a kernel object by ID.
+  
+  ```rust
+  if let Some(mutex) = object_manager.get_object::<Mutex>(mutex_id) {
+      // Use mutex
+  }
+  ```
+</ParamField>
+
+<ParamField path="destroy_object" type="fn(&self, id: u32) -> Result<(), KernelError>">
+  Destroys a kernel object.
+</ParamField>
+
+## ProcessManager
+
+Manages PS3 processes.
+
+### Methods
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new process manager.
+</ParamField>
+
+<ParamField path="get_current_pid" type="fn(&self) -> u32">
+  Returns the current process ID.
+</ParamField>
+
+<ParamField path="get_parent_pid" type="fn(&self) -> u32">
+  Returns the parent process ID.
+</ParamField>
+
+<ParamField path="get_sdk_version" type="fn(&self, pid: u32) -> Result<u32, KernelError>">
+  Gets the SDK version for a process.
+  
+  ```rust
+  let version = process_manager.get_sdk_version(pid)?;
+  println!("SDK version: 0x{:08x}", version);
+  ```
+</ParamField>
+
+<ParamField path="exit_process" type="fn(&self, exit_code: i32) -> Result<(), KernelError>">
+  Exits the current process.
+</ParamField>
+
+## ThreadManager
+
+Manages PPU threads.
+
+### Thread creation
+
+<ParamField path="create_thread" type="fn(&self, entry: u64, arg: u64, priority: u32, stack_size: usize, flags: u64, name: &str) -> Result<u64, KernelError>">
+  Creates a new thread.
+  
+  ```rust
+  let thread_id = thread_manager.create_thread(
+      0x10000,        // Entry point
+      0xDEAD,         // Argument
+      1024,           // Priority
+      0x10000,        // Stack size (64 KB)
+      0,              // Flags
+      "worker_thread", // Name
+  )?;
+  ```
+</ParamField>
+
+### Thread control
+
+<ParamField path="start_thread" type="fn(&self, thread_id: u64) -> Result<(), KernelError>">
+  Starts a thread.
+</ParamField>
+
+<ParamField path="exit_thread" type="fn(&self, exit_code: u64) -> Result<(), KernelError>">
+  Exits the current thread.
+</ParamField>
+
+<ParamField path="join_thread" type="fn(&self, thread_id: u64) -> Result<u64, KernelError>">
+  Waits for a thread to finish and returns its exit code.
+  
+  ```rust
+  let exit_code = thread_manager.join_thread(thread_id)?;
+  println!("Thread exited with code: {}", exit_code);
+  ```
+</ParamField>
+
+<ParamField path="detach_thread" type="fn(&self, thread_id: u64) -> Result<(), KernelError>">
+  Detaches a thread (makes it non-joinable).
+</ParamField>
+
+### Thread properties
+
+<ParamField path="get_current_thread_id" type="fn(&self) -> u64">
+  Returns the current thread ID.
+</ParamField>
+
+<ParamField path="get_priority" type="fn(&self, thread_id: u64) -> Result<u32, KernelError>">
+  Gets a thread's priority.
+</ParamField>
+
+<ParamField path="set_priority" type="fn(&self, thread_id: u64, priority: u32) -> Result<(), KernelError>">
+  Sets a thread's priority.
+  
+  ```rust
+  thread_manager.set_priority(thread_id, 2048)?;  // Lower priority
+  ```
+</ParamField>
+
+<ParamField path="yield_thread" type="fn(&self) -> Result<(), KernelError>">
+  Yields the current thread's timeslice.
+</ParamField>
+
+## Synchronization primitives
+
+The `oc_lv2` crate provides full implementations of PS3 synchronization primitives.
+
+### Mutex
+
+```rust
+use oc_lv2::sync::mutex;
+
+// Create mutex
+let mutex_id = mutex::syscalls::sys_mutex_create(
+    &object_manager,
+    mutex::MutexAttributes::default(),
+)?;
+
+// Lock
+mutex::syscalls::sys_mutex_lock(&object_manager, mutex_id, thread_id)?;
+
+// Unlock
+mutex::syscalls::sys_mutex_unlock(&object_manager, mutex_id, thread_id)?;
+
+// Destroy
+mutex::syscalls::sys_mutex_destroy(&object_manager, mutex_id)?;
+```
+
+### Condition variable
+
+```rust
+use oc_lv2::sync::cond;
+
+// Create condition variable
+let cond_id = cond::syscalls::sys_cond_create(
+    &object_manager,
+    cond::CondAttributes::default(),
+)?;
+
+// Wait
+cond::syscalls::sys_cond_wait(
+    &object_manager,
+    cond_id,
+    mutex_id,
+    thread_id,
+    timeout_usec,
+)?;
+
+// Signal one
+cond::syscalls::sys_cond_signal(&object_manager, cond_id)?;
+
+// Signal all
+cond::syscalls::sys_cond_signal_all(&object_manager, cond_id)?;
+```
+
+### Semaphore
+
+```rust
+use oc_lv2::sync::semaphore;
+
+// Create semaphore
+let sem_id = semaphore::syscalls::sys_semaphore_create(
+    &object_manager,
+    initial_count,
+    max_count,
+)?;
+
+// Wait (decrement)
+semaphore::syscalls::sys_semaphore_wait(&object_manager, sem_id, timeout)?;
+
+// Post (increment)
+semaphore::syscalls::sys_semaphore_post(&object_manager, sem_id, count)?;
+```
+
+### Event flag
+
+```rust
+use oc_lv2::sync::event_flag;
+
+// Create event flag
+let flag_id = event_flag::syscalls::sys_event_flag_create(
+    &object_manager,
+    event_flag::EventFlagAttributes::default(),
+    init_pattern,
+)?;
+
+// Wait for pattern
+event_flag::syscalls::sys_event_flag_wait(
+    &object_manager,
+    flag_id,
+    pattern,
+    mode,  // AND or OR
+    timeout,
+)?;
+
+// Set bits
+event_flag::syscalls::sys_event_flag_set(&object_manager, flag_id, pattern)?;
+```
+
+### RwLock (reader-writer lock)
+
+```rust
+use oc_lv2::sync::rwlock;
+
+// Create rwlock
+let rwlock_id = rwlock::syscalls::sys_rwlock_create(
+    &object_manager,
+    rwlock::RwLockAttributes::default(),
+)?;
+
+// Read lock
+rwlock::syscalls::sys_rwlock_rlock(&object_manager, rwlock_id, thread_id)?;
+
+// Write lock
+rwlock::syscalls::sys_rwlock_wlock(&object_manager, rwlock_id, thread_id)?;
+
+// Unlock
+rwlock::syscalls::sys_rwlock_unlock(&object_manager, rwlock_id, thread_id)?;
+```
+
+## File system operations
+
+File system operations are handled through the VFS:
+
+```rust
+use oc_lv2::fs;
+
+// Open file
+let fd = fs::syscalls::sys_fs_open(&vfs, "/dev_hdd0/game/data.bin", flags, mode)?;
+
+// Read
+let bytes_read = fs::syscalls::sys_fs_read(&vfs, fd, buffer, size)?;
+
+// Write
+let bytes_written = fs::syscalls::sys_fs_write(&vfs, fd, buffer, size)?;
+
+// Seek
+fs::syscalls::sys_fs_lseek(&vfs, fd, offset, whence)?;
+
+// Close
+fs::syscalls::sys_fs_close(&vfs, fd)?;
+
+// Stat
+let stat = fs::syscalls::sys_fs_stat(&vfs, "/dev_hdd0/game/data.bin")?;
+println!("File size: {} bytes", stat.size);
+```
+
+## Time management
+
+```rust
+use oc_lv2::time;
+
+// Get current time
+let time = time::syscalls::sys_time_get_current_time()?;
+println!("Current time: {} microseconds", time);
+
+// Get timebase frequency
+let freq = time::syscalls::sys_time_get_timebase_frequency();
+println!("Timebase frequency: {} Hz", freq);
+
+// Sleep
+time::syscalls::sys_timer_sleep(seconds)?;
+time::syscalls::sys_timer_usleep(microseconds)?;
+```
+
+## Error types
+
+<ResponseField name="KernelError" type="enum">
+  LV2 kernel errors
+  
+  - `UnknownSyscall(u64)` - Unknown system call number
+  - `InvalidId(u32)` - Invalid object ID
+  - `ResourceLimit` - Resource limit exceeded
+  - `PermissionDenied` - Permission denied
+  - `WouldBlock` - Operation would block
+  - `Timeout` - Operation timed out
+  - `InvalidArgument` - Invalid argument
+  - `NoSuchFile` - File not found
+  - `MemoryAccess` - Memory access error
+</ResponseField>
+
+## System call numbers
+
+System call numbers are defined in `syscall_numbers`:
+
+```rust
+pub const SYS_PROCESS_GETPID: u64 = 1;
+pub const SYS_PROCESS_EXIT: u64 = 3;
+
+pub const SYS_PPU_THREAD_CREATE: u64 = 160;
+pub const SYS_PPU_THREAD_EXIT: u64 = 41;
+pub const SYS_PPU_THREAD_JOIN: u64 = 44;
+pub const SYS_PPU_THREAD_YIELD: u64 = 43;
+
+pub const SYS_MUTEX_CREATE: u64 = 100;
+pub const SYS_MUTEX_DESTROY: u64 = 101;
+pub const SYS_MUTEX_LOCK: u64 = 102;
+pub const SYS_MUTEX_UNLOCK: u64 = 104;
+
+pub const SYS_COND_CREATE: u64 = 105;
+pub const SYS_COND_WAIT: u64 = 107;
+pub const SYS_COND_SIGNAL: u64 = 108;
+// ... many more
+```
+
+## Example: Custom syscall handler
+
+```rust
+use oc_lv2::{SyscallHandler, syscall_numbers::*};
+use oc_memory::MemoryManager;
+use oc_vfs::VirtualFileSystem;
+use std::sync::Arc;
+
+// Create subsystems
+let memory = MemoryManager::new()?;
+let vfs = Arc::new(VirtualFileSystem::new());
+
+// Create handler
+let handler = SyscallHandler::with_vfs(vfs);
+handler.set_emulator_memory(memory);
+
+// Handle a syscall
+let args = [0; 8];
+match handler.handle(SYS_PROCESS_GETPID, &args) {
+    Ok(pid) => println!("Process ID: {}", pid),
+    Err(e) => eprintln!("Syscall failed: {:?}", e),
+}
+```

@@ -1,0 +1,397 @@
+---
+title: Virtual file system
+description: ISO 9660, PKG, PARAM.SFO, and save data management
+---
+
+The virtual file system (VFS) provides access to PS3 game files, disc images, packages, save data, and trophies. It emulates the PS3's file system structure and device mounting.
+
+## Overview
+
+The VFS component (`oc-vfs`) implements:
+
+- **ISO 9660**: Disc image mounting and reading
+- **PKG files**: Game package extraction
+- **PARAM.SFO**: Game metadata parsing
+- **Save data**: Save game management
+- **Trophies**: Trophy data and unlocks
+- **User profiles**: User data management
+- **Device mounting**: Virtual device paths
+
+```rust
+pub use mount::VirtualFileSystem;
+pub use disc::{DiscFormat, DiscManager};
+pub use formats::iso::{IsoReader, IsoVolume};
+pub use formats::sfo::{Sfo, SfoValue};
+pub use savedata::{SaveDataManager, SaveDataInfo};
+pub use trophy::{TrophyManager, Trophy, TrophyGrade};
+pub use users::{UserManager, UserProfile};
+```
+
+## Architecture
+
+The VFS is organized into:
+
+- **mount**: VFS core and device mounting
+- **disc**: Disc image management
+- **formats**: File format readers (ISO, SFO, PKG)
+- **devices**: Virtual device implementations
+- **savedata**: Save data management
+- **trophy**: Trophy system
+- **users**: User profile management
+
+## Virtual file system
+
+The `VirtualFileSystem` manages all file access:
+
+```rust
+use oc_vfs::VirtualFileSystem;
+
+let mut vfs = VirtualFileSystem::new();
+
+// Mount game disc
+vfs.mount(
+    "/dev_bdvd",
+    disc_path,
+)?;
+
+// Open file
+let file = vfs.open("/dev_bdvd/PS3_GAME/PARAM.SFO")?;
+
+// Read file contents
+let data = file.read_to_end()?;
+```
+
+### Device paths
+
+| Path | Description |
+|------|-------------|
+| `/dev_hdd0/` | Hard disk drive (save data, DLC) |
+| `/dev_bdvd/` | Blu-ray disc (game files) |
+| `/dev_usb000/` | USB device 0 |
+| `/dev_usb001/` | USB device 1 |
+| `/dev_flash/` | System flash (firmware) |
+| `/app_home/` | Application directory |
+| `/host_root/` | Host file system root |
+
+<Note>
+Device paths match PS3 conventions for compatibility with game code.
+</Note>
+
+## Disc management
+
+The `DiscManager` handles game discs:
+
+```rust
+use oc_vfs::{DiscManager, DiscFormat};
+
+let mut disc_mgr = DiscManager::new();
+
+// Detect disc format
+let format = disc_mgr.detect_format(path)?;
+
+match format {
+    DiscFormat::Iso => {
+        // ISO 9660 image
+    }
+    DiscFormat::Pkg => {
+        // PKG package
+    }
+    DiscFormat::Directory => {
+        // Extracted game directory
+    }
+}
+
+// Mount disc
+disc_mgr.mount_disc(path)?;
+
+// Get disc info
+let info = disc_mgr.get_disc_info()?;
+println!("Title: {}", info.title);
+println!("Title ID: {}", info.title_id);
+```
+
+### Disc formats
+
+<Tabs>
+  <Tab title="ISO 9660">
+    Standard disc image format:
+    ```rust
+    use oc_vfs::IsoReader;
+    
+    let iso = IsoReader::open("game.iso")?;
+    let root = iso.root_directory()?;
+    
+    // List files
+    for entry in root.entries()? {
+        println!("{}", entry.name);
+    }
+    ```
+  </Tab>
+  <Tab title="PKG">
+    PlayStation package format:
+    ```rust
+    use oc_loader::PkgLoader;
+    
+    let pkg = PkgLoader::open("game.pkg")?;
+    let header = pkg.read_header()?;
+    
+    // Extract contents
+    pkg.extract_to("extracted/")?;
+    ```
+  </Tab>
+  <Tab title="Directory">
+    Extracted game directory:
+    ```
+    game/
+    ├── PS3_GAME/
+    │   ├── PARAM.SFO
+    │   ├── EBOOT.BIN
+    │   └── USRDIR/
+    └── PS3_DISC.SFB
+    ```
+  </Tab>
+</Tabs>
+
+## PARAM.SFO
+
+The `Sfo` struct parses game metadata:
+
+```rust
+use oc_vfs::Sfo;
+
+let sfo = Sfo::load("PARAM.SFO")?;
+
+// Get string value
+let title = sfo.get_string("TITLE")?;
+let title_id = sfo.get_string("TITLE_ID")?;
+
+// Get integer value
+let version = sfo.get_u32("VERSION")?;
+let category = sfo.get_string("CATEGORY")?;
+
+println!("Game: {}", title);
+println!("ID: {}", title_id);
+println!("Version: {}.{:02}", version / 100, version % 100);
+```
+
+### Common SFO fields
+
+<Accordion title="PARAM.SFO fields">
+| Field | Type | Description |
+|-------|------|-------------|
+| TITLE | String | Game title |
+| TITLE_ID | String | Title ID (e.g., BLUS12345) |
+| VERSION | String | Version (e.g., 01.00) |
+| CATEGORY | String | Category (DG=Disc, HG=HDD) |
+| APP_VER | String | Application version |
+| PARENTAL_LEVEL | Int | Age rating |
+| RESOLUTION | Int | Supported resolutions |
+| SOUND_FORMAT | Int | Audio formats |
+</Accordion>
+
+### Creating PARAM.SFO
+
+```rust
+use oc_vfs::SfoBuilder;
+
+let sfo = SfoBuilder::new()
+    .add_string("TITLE", "My Game")
+    .add_string("TITLE_ID", "CUSA00000")
+    .add_string("VERSION", "01.00")
+    .add_u32("PARENTAL_LEVEL", 0)
+    .build()?;
+
+sfo.save("PARAM.SFO")?;
+```
+
+## Save data management
+
+The `SaveDataManager` handles save games:
+
+```rust
+use oc_vfs::{SaveDataManager, SaveDataType};
+
+let mut save_mgr = SaveDataManager::new();
+
+// List save data
+let saves = save_mgr.list_save_data(title_id)?;
+
+for save in saves {
+    println!("Save: {}", save.dir_name);
+    println!("Title: {}", save.title);
+    println!("Size: {} bytes", save.size);
+}
+
+// Load save data
+let save = save_mgr.load_save_data(
+    title_id,
+    save_dir,
+)?;
+
+// Save data
+save_mgr.save_data(
+    title_id,
+    save_dir,
+    &data,
+)?;
+```
+
+### Save data structure
+
+```
+/dev_hdd0/home/00000001/savedata/BLUS12345-SAVE01/
+├── PARAM.SFO           # Save metadata
+├── ICON0.PNG           # Save icon
+├── SAVE.DAT            # Save data file
+└── ...
+```
+
+## Trophy management
+
+The `TrophyManager` handles trophies:
+
+```rust
+use oc_vfs::{TrophyManager, Trophy, TrophyGrade};
+
+let mut trophy_mgr = TrophyManager::new();
+
+// Load trophy set
+let trophy_set = trophy_mgr.load_trophy_set(title_id)?;
+
+// List trophies
+for trophy in trophy_set.trophies {
+    println!("Trophy: {}", trophy.name);
+    println!("Grade: {:?}", trophy.grade);
+    println!("Hidden: {}", trophy.hidden);
+}
+
+// Unlock trophy
+trophy_mgr.unlock_trophy(
+    title_id,
+    trophy_id,
+)?;
+
+// Get unlock status
+let unlocked = trophy_mgr.is_trophy_unlocked(
+    title_id,
+    trophy_id,
+)?;
+```
+
+### Trophy grades
+
+<CardGroup cols={4}>
+  <Card title="Bronze" icon="medal">
+    Common trophies
+  </Card>
+  <Card title="Silver" icon="trophy">
+    Uncommon trophies
+  </Card>
+  <Card title="Gold" icon="star">
+    Rare trophies
+  </Card>
+  <Card title="Platinum" icon="crown">
+    All trophies unlocked
+  </Card>
+</CardGroup>
+
+## User profiles
+
+The `UserManager` handles user data:
+
+```rust
+use oc_vfs::{UserManager, UserProfile};
+
+let mut user_mgr = UserManager::new();
+
+// Create user
+let user_id = user_mgr.create_user(
+    "Player1",
+)?;
+
+// Get user profile
+let profile = user_mgr.get_user(user_id)?;
+println!("Username: {}", profile.username);
+
+// Set current user
+user_mgr.set_current_user(user_id)?;
+```
+
+### User directory structure
+
+```
+/dev_hdd0/home/
+├── 00000001/           # User 1
+│   ├── savedata/       # Save data
+│   ├── trophy/         # Trophies
+│   └── ...
+└── 00000002/           # User 2
+    └── ...
+```
+
+## File operations
+
+Standard file operations:
+
+<Tabs>
+  <Tab title="Read">
+    ```rust
+    // Open file for reading
+    let file = vfs.open("/dev_hdd0/data.bin")?;
+    
+    // Read entire file
+    let data = file.read_to_end()?;
+    
+    // Read specific size
+    let mut buf = vec![0u8; 1024];
+    let bytes_read = file.read(&mut buf)?;
+    ```
+  </Tab>
+  <Tab title="Write">
+    ```rust
+    // Create file for writing
+    let mut file = vfs.create("/dev_hdd0/output.bin")?;
+    
+    // Write data
+    file.write_all(&data)?;
+    
+    // Flush to disk
+    file.flush()?;
+    ```
+  </Tab>
+  <Tab title="Directory">
+    ```rust
+    // List directory contents
+    let entries = vfs.read_dir("/dev_hdd0/game/")?;
+    
+    for entry in entries {
+        println!("{}", entry.name);
+    }
+    
+    // Create directory
+    vfs.create_dir("/dev_hdd0/newdir")?;
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration
+
+VFS settings in `config.toml`:
+
+```toml
+[paths]
+hdd0 = "~/.oxidized-cell/hdd0"      # HDD path
+usb000 = "/media/usb"               # USB path
+app_home = "./game"                 # Game directory
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Loading games" icon="folder-open" href="/guide/loading-games">
+    How to load game files
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guide/configuration">
+    VFS configuration
+  </Card>
+</CardGroup>

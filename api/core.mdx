@@ -1,0 +1,337 @@
+---
+title: "oc_core"
+description: "Core emulator logic and infrastructure"
+---
+
+The `oc_core` crate provides the foundational types, error handling, configuration, and logging infrastructure for the oxidized-cell PS3 emulator.
+
+## Overview
+
+This crate contains:
+
+- **Emulator** - Main emulator state machine
+- **Config** - Configuration system with TOML serialization
+- **Error handling** - Unified error types for all components
+- **Logging** - Structured logging with runtime level control
+- **Scheduler** - Thread scheduling and timing
+- **Bridge systems** - RSX and SPU communication channels
+
+## Emulator
+
+The `Emulator` struct manages the overall emulator lifecycle.
+
+### Types
+
+<ResponseField name="EmulatorState" type="enum">
+  Current emulator state
+  
+  - `Stopped` - Emulator is stopped
+  - `Running` - Emulator is running
+  - `Paused` - Emulator is paused
+</ResponseField>
+
+### Methods
+
+<ParamField path="new" type="fn(config: Config) -> Result<Self>">
+  Creates a new emulator instance with the specified configuration.
+  
+  ```rust
+  use oc_core::{Emulator, Config};
+  
+  let config = Config::default();
+  let emu = Emulator::new(config)?;
+  ```
+</ParamField>
+
+<ParamField path="start" type="fn(&mut self) -> Result<()>">
+  Starts the emulator, transitioning from `Stopped` to `Running` state.
+</ParamField>
+
+<ParamField path="pause" type="fn(&mut self) -> Result<()>">
+  Pauses the emulator. Only works when in `Running` state.
+</ParamField>
+
+<ParamField path="resume" type="fn(&mut self) -> Result<()>">
+  Resumes execution from `Paused` state.
+</ParamField>
+
+<ParamField path="stop" type="fn(&mut self) -> Result<()>">
+  Stops the emulator completely.
+</ParamField>
+
+<ParamField path="state" type="fn(&self) -> EmulatorState">
+  Returns the current emulator state.
+</ParamField>
+
+<ParamField path="config" type="fn(&self) -> &Config">
+  Returns a reference to the emulator's configuration.
+</ParamField>
+
+<ParamField path="config_mut" type="fn(&mut self) -> &mut Config">
+  Returns a mutable reference to the configuration.
+</ParamField>
+
+## Configuration
+
+The configuration system uses TOML format and supports runtime reloading.
+
+### Config structure
+
+```rust
+pub struct Config {
+    pub general: GeneralConfig,
+    pub cpu: CpuConfig,
+    pub gpu: GpuConfig,
+    pub audio: AudioConfig,
+    pub input: InputConfig,
+    pub paths: PathConfig,
+    pub debug: DebugConfig,
+}
+```
+
+### CPU configuration
+
+<ResponseField name="CpuConfig" type="struct">
+  <ParamField path="ppu_decoder" type="PpuDecoder">
+    PPU decoder mode (Interpreter or Recompiler)
+  </ParamField>
+  
+  <ParamField path="spu_decoder" type="SpuDecoder">
+    SPU decoder mode (Interpreter or Recompiler)
+  </ParamField>
+  
+  <ParamField path="ppu_threads" type="u32">
+    Number of PPU threads (default: 2)
+  </ParamField>
+  
+  <ParamField path="spu_threads" type="u32">
+    Number of SPU threads (default: 6)
+  </ParamField>
+  
+  <ParamField path="accurate_dfma" type="bool">
+    Enable accurate fused multiply-add operations
+  </ParamField>
+  
+  <ParamField path="spu_loop_detection" type="bool">
+    Enable SPU loop detection optimization
+  </ParamField>
+  
+  <ParamField path="cycle_accurate_timing" type="bool">
+    Enable cycle-accurate timing simulation
+  </ParamField>
+  
+  <ParamField path="pipeline_simulation" type="bool">
+    Enable CPU pipeline simulation
+  </ParamField>
+</ResponseField>
+
+### GPU configuration
+
+<ResponseField name="GpuConfig" type="struct">
+  <ParamField path="backend" type="GpuBackend">
+    Graphics backend (Vulkan or Null)
+  </ParamField>
+  
+  <ParamField path="resolution_scale" type="u32">
+    Resolution scaling percentage (default: 100)
+  </ParamField>
+  
+  <ParamField path="anisotropic_filter" type="u32">
+    Anisotropic filtering level (default: 8)
+  </ParamField>
+  
+  <ParamField path="vsync" type="bool">
+    Enable vertical sync
+  </ParamField>
+  
+  <ParamField path="frame_limit" type="u32">
+    Frame rate limit in Hz (default: 60)
+  </ParamField>
+  
+  <ParamField path="shader_cache" type="bool">
+    Enable shader caching
+  </ParamField>
+</ResponseField>
+
+### Methods
+
+<ParamField path="Config::load" type="fn() -> Result<Self>">
+  Loads configuration from the default location, or creates a new default config if it doesn't exist.
+  
+  ```rust
+  use oc_core::Config;
+  
+  let config = Config::load()?;
+  ```
+</ParamField>
+
+<ParamField path="Config::save" type="fn(&self) -> Result<()>">
+  Saves the current configuration to disk.
+  
+  ```rust
+  config.save()?;
+  ```
+</ParamField>
+
+<ParamField path="Config::config_path" type="fn() -> PathBuf">
+  Returns the path to the configuration file.
+</ParamField>
+
+## Error handling
+
+All operations return `Result<T>` which is an alias for `Result<T, EmulatorError>`.
+
+### Error types
+
+<ResponseField name="EmulatorError" type="enum">
+  Main error type for the emulator
+  
+  - `Memory(MemoryError)` - Memory-related errors
+  - `Ppu(PpuError)` - PPU execution errors
+  - `Spu(SpuError)` - SPU execution errors
+  - `Rsx(RsxError)` - Graphics errors
+  - `Kernel(KernelError)` - LV2 kernel errors
+  - `Loader(LoaderError)` - File loading errors
+  - `Io(std::io::Error)` - I/O errors
+  - `Config(String)` - Configuration errors
+  - `GameNotFound(String)` - Game not found
+  - `Unsupported(String)` - Unsupported feature
+</ResponseField>
+
+### Memory errors
+
+<ResponseField name="MemoryError" type="enum">
+  - `OutOfMemory` - Out of memory
+  - `InvalidAddress(u32)` - Invalid memory address
+  - `AccessViolation { addr: u32, kind: AccessKind }` - Memory access violation
+  - `ReservationConflict(u32)` - Reservation conflict (atomics)
+  - `AlignmentError { addr: u32, align: u32 }` - Alignment error
+  - `WatchpointHit { addr: u32, kind: AccessKind }` - Debugger watchpoint hit
+  - `SelfModifyingCode(u32)` - Self-modifying code detected
+</ResponseField>
+
+## Logging
+
+The logging system uses the `tracing` crate for structured logging.
+
+### Functions
+
+<ParamField path="init_with_reload" type="fn(initial_level: LogLevel)">
+  Initializes the logging system with reloadable filter support.
+  
+  ```rust
+  use oc_core::logging::{init_with_reload, LogLevel};
+  
+  init_with_reload(LogLevel::Info);
+  ```
+</ParamField>
+
+<ParamField path="set_log_level" type="fn(level: LogLevel) -> bool">
+  Changes the log level at runtime. Returns true if successful.
+  
+  ```rust
+  use oc_core::logging::{set_log_level, LogLevel};
+  
+  if set_log_level(LogLevel::Debug) {
+      println!("Log level changed to Debug");
+  }
+  ```
+</ParamField>
+
+### Log levels
+
+<ResponseField name="LogLevel" type="enum">
+  - `Off` - No logging
+  - `Error` - Only errors
+  - `Warn` - Warnings and errors
+  - `Info` - Informational messages (default)
+  - `Debug` - Debug information
+  - `Trace` - Detailed trace information
+</ResponseField>
+
+### Component-specific macros
+
+```rust
+use oc_core::{ppu_trace, spu_debug, rsx_debug, kernel_trace};
+
+// PPU logging
+ppu_trace!("Executing instruction at 0x{:08x}", pc);
+ppu_debug!("Thread {} created", thread_id);
+
+// SPU logging
+spu_debug!("SPU {} started", spu_id);
+
+// RSX logging
+rsx_debug!("Flip to buffer {}", buffer_id);
+
+// Kernel logging
+kernel_trace!("Syscall {} invoked", syscall_num);
+```
+
+## Scheduler
+
+The scheduler manages thread execution and timing.
+
+### Types
+
+<ResponseField name="ThreadId" type="u32">
+  Unique thread identifier
+</ResponseField>
+
+<ResponseField name="ThreadState" type="enum">
+  - `Ready` - Ready to run
+  - `Running` - Currently executing
+  - `Blocked` - Waiting for event
+  - `Terminated` - Thread has exited
+</ResponseField>
+
+<ResponseField name="ThreadStats" type="struct">
+  Performance statistics for a thread
+  
+  ```rust
+  pub struct ThreadStats {
+      pub cycles: u64,
+      pub instructions: u64,
+      pub context_switches: u64,
+  }
+  ```
+</ResponseField>
+
+## Bridge systems
+
+Bridge systems provide communication channels between the PPU and RSX/SPU subsystems.
+
+### RSX bridge
+
+<ParamField path="create_rsx_bridge" type="fn() -> (RsxBridgeSender, RsxBridgeReceiver)">
+  Creates a new RSX bridge for PPU ↔ RSX communication.
+  
+  ```rust
+  use oc_core::create_rsx_bridge;
+  
+  let (sender, receiver) = create_rsx_bridge();
+  // Pass sender to GCM HLE, receiver to RSX thread
+  ```
+</ParamField>
+
+<ResponseField name="BridgeMessage" type="enum">
+  Messages sent through the RSX bridge
+  
+  - `Commands(Vec<BridgeCommand>)` - RSX command buffer
+  - `ConfigureDisplayBuffer(BridgeDisplayBuffer)` - Configure display buffer
+  - `Flip(BridgeFlipRequest)` - Request display flip
+  - `Finish` - Synchronization point
+</ResponseField>
+
+### SPU bridge
+
+<ParamField path="create_spu_bridge" type="fn() -> (SpuBridgeSender, SpuBridgeReceiver)">
+  Creates a new SPU bridge for PPU ↔ SPU communication.
+</ParamField>
+
+<ResponseField name="SpuBridgeMessage" type="enum">
+  - `ThreadRequest(SpuThreadRequest)` - SPU thread operation
+  - `GroupRequest(SpuGroupRequest)` - SPU group operation
+  - `DmaRequest(SpuDmaRequest)` - DMA transfer request
+  - `Event(SpuEvent)` - Event notification
+</ResponseField>

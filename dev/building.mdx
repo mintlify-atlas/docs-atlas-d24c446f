@@ -1,0 +1,426 @@
+---
+title: Building from source
+description: Complete guide to building oxidized-cell from source on all platforms
+---
+
+## Overview
+
+oxidized-cell is a hybrid Rust/C++ PlayStation 3 emulator. Building from source requires both Rust and C++ toolchains, along with platform-specific dependencies for graphics (Vulkan) and audio support.
+
+<Note>
+The project uses a Cargo workspace for Rust crates and CMake for C++ components. The Rust build system automatically handles C++ compilation through the build script.
+</Note>
+
+## Prerequisites
+
+### All platforms
+
+- **Rust** 1.80+ (via [rustup](https://rustup.rs))
+- **C++ Compiler** with C++20 support
+  - Linux: GCC 9+ or Clang 10+
+  - Windows: MSVC 2019+ or MinGW-w64
+  - macOS: Xcode Command Line Tools
+- **CMake** 3.20+
+- **LLVM** 14+ (optional, for JIT compilation)
+- **Vulkan SDK** 1.2+
+
+### Platform-specific dependencies
+
+<Tabs>
+  <Tab title="Linux">
+    **Ubuntu/Debian:**
+    ```bash
+    sudo apt update
+    sudo apt install -y build-essential cmake llvm-dev libvulkan-dev libasound2-dev pkg-config
+    ```
+
+    **Fedora:**
+    ```bash
+    sudo dnf install -y gcc gcc-c++ cmake llvm-devel vulkan-loader-devel alsa-lib-devel
+    ```
+
+    **Arch Linux:**
+    ```bash
+    sudo pacman -S base-devel cmake llvm vulkan-icd-loader alsa-lib
+    ```
+  </Tab>
+  <Tab title="Windows">
+    **Required:**
+    - [Visual Studio 2019+](https://visualstudio.microsoft.com/) with C++ workload
+    - [Vulkan SDK](https://vulkan.lunarg.com/sdk/home#windows)
+    - [Rust via rustup](https://rustup.rs)
+
+    **Optional (for JIT):**
+    - [LLVM 14+](https://releases.llvm.org/download.html) - install to default location
+
+    <Note>
+    The MSVC toolchain is recommended for Windows. MinGW-w64 is supported but requires additional configuration.
+    </Note>
+  </Tab>
+  <Tab title="macOS">
+    **Install via Homebrew:**
+    ```bash
+    brew install llvm cmake
+    ```
+
+    **Install Xcode Command Line Tools:**
+    ```bash
+    xcode-select --install
+    ```
+
+    <Warning>
+    MoltenVK is included with the Vulkan SDK on macOS. Download from [LunarG](https://vulkan.lunarg.com/sdk/home#mac).
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Quick build
+
+### Clone the repository
+
+```bash
+git clone https://github.com/darkace1998/oxidized-cell.git
+cd oxidized-cell
+```
+
+### Build release version
+
+```bash
+cargo build --release
+```
+
+The compiled binary will be located at:
+- Linux/macOS: `target/release/oxidized-cell`
+- Windows: `target\release\oxidized-cell.exe`
+
+### Build development version
+
+```bash
+cargo build
+```
+
+Development builds include debug symbols and use `opt-level = 1` for faster compilation while maintaining reasonable performance.
+
+## Build configuration
+
+### Rust toolchain
+
+The project specifies its Rust toolchain in `rust-toolchain.toml`:
+
+```toml
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+```
+
+### Cargo configuration
+
+Platform-specific optimizations are configured in `.cargo/config.toml`:
+
+<CodeGroup>
+```toml Linux
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
+```
+
+```toml Windows (MSVC)
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=native"]
+```
+
+```toml macOS (Intel)
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]
+```
+
+```toml macOS (Apple Silicon)
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]
+```
+</CodeGroup>
+
+## Advanced build options
+
+### Building with LLVM JIT support
+
+The C++ JIT components require LLVM 14+:
+
+<Steps>
+  <Step title="Ensure LLVM is installed">
+    ```bash
+    llvm-config --version
+    ```
+    Should output version 14.0.0 or higher.
+  </Step>
+  <Step title="Build with JIT enabled">
+    ```bash
+    cargo build --release
+    ```
+    The build script automatically detects LLVM and enables JIT compilation.
+  </Step>
+  <Step title="Verify JIT support">
+    Check build output for:
+    ```
+    Found LLVM <version>
+    Using LLVMConfig.cmake in: <path>
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+If LLVM is not found, the build will succeed with placeholder JIT implementations. The emulator will still work but will use interpreter-only mode.
+</Tip>
+
+### Building without JIT support
+
+To build without LLVM dependencies:
+
+```bash
+cargo build --release
+```
+
+The CMake configuration (`cpp/CMakeLists.txt`) automatically handles missing LLVM:
+
+```cmake
+if(LLVM_FOUND)
+    # Enable JIT compilation
+else()
+    message(WARNING "LLVM not found. JIT will use placeholder implementation.")
+endif()
+```
+
+### Building specific crates
+
+```bash
+# Build only the memory subsystem
+cargo build -p oc-memory
+
+# Build the PPU emulator
+cargo build -p oc-ppu
+
+# Build the RSX graphics backend
+cargo build -p oc-rsx
+```
+
+### Cross-compilation for Windows
+
+From Linux, use the provided build script:
+
+```bash
+./build-windows.sh
+```
+
+This script:
+1. Installs the `x86_64-pc-windows-gnu` target
+2. Sets up MinGW-w64 cross-compiler
+3. Configures static linking for libgcc and libstdc++
+4. Builds the Windows executable
+
+Output: `target/x86_64-pc-windows-gnu/release/oxidized-cell.exe`
+
+## Testing the build
+
+### Run all tests
+
+```bash
+cargo test
+```
+
+### Run tests for specific components
+
+<CodeGroup>
+```bash Memory subsystem
+cargo test -p oc-memory
+```
+
+```bash PPU interpreter
+cargo test -p oc-ppu
+```
+
+```bash SPU interpreter
+cargo test -p oc-spu
+```
+
+```bash RSX graphics
+cargo test -p oc-rsx
+```
+
+```bash HLE modules
+cargo test -p oc-hle -- --test-threads=1
+```
+</CodeGroup>
+
+### Run with verbose output
+
+```bash
+cargo test -- --nocapture
+```
+
+## Running the emulator
+
+### Launch UI mode
+
+```bash
+cargo run --release
+```
+
+### Run with a game file
+
+```bash
+cargo run --release -- /path/to/game.elf
+```
+
+### Enable debug logging
+
+```bash
+RUST_LOG=debug cargo run --release
+```
+
+Available log levels: `error`, `warn`, `info`, `debug`, `trace`
+
+### Filter logs by component
+
+```bash
+# Only PPU logs
+RUST_LOG=oc_ppu=debug cargo run --release
+
+# Multiple components
+RUST_LOG=oc_ppu=debug,oc_memory=info cargo run --release
+```
+
+## Build profiles
+
+### Release profile
+
+Optimized for performance:
+
+```toml
+[profile.release]
+lto = "thin"           # Thin link-time optimization
+codegen-units = 1      # Better optimization, slower compile
+panic = "abort"        # Smaller binary size
+```
+
+### Development profile
+
+Balanced for debugging:
+
+```toml
+[profile.dev]
+opt-level = 1  # Some optimization for usable debug builds
+```
+
+### Benchmark profile
+
+For performance testing:
+
+```toml
+[profile.bench]
+inherits = "release"
+debug = true   # Include debug symbols for profiling
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="LLVM not found during build">
+    **Symptoms:** Warning message during build about missing LLVM.
+
+    **Solution:**
+    - Ensure LLVM 14+ is installed
+    - Set `LLVM_SYS_140_PREFIX` environment variable:
+      ```bash
+      export LLVM_SYS_140_PREFIX=/usr/lib/llvm-14
+      cargo build --release
+      ```
+    - On macOS with Homebrew:
+      ```bash
+      export LLVM_SYS_140_PREFIX="$(brew --prefix llvm)"
+      ```
+  </Accordion>
+
+  <Accordion title="Vulkan SDK not found">
+    **Symptoms:** Linker errors about missing Vulkan libraries.
+
+    **Solution:**
+    - Install Vulkan SDK from [LunarG](https://vulkan.lunarg.com)
+    - Set environment variable:
+      ```bash
+      export VULKAN_SDK=/path/to/vulkan/sdk
+      ```
+    - On Linux, also set:
+      ```bash
+      export LD_LIBRARY_PATH=$VULKAN_SDK/lib:$LD_LIBRARY_PATH
+      ```
+  </Accordion>
+
+  <Accordion title="ALSA library not found (Linux)">
+    **Symptoms:** Build fails with `alsa-sys` errors.
+
+    **Solution:**
+    ```bash
+    # Ubuntu/Debian
+    sudo apt install libasound2-dev
+
+    # Fedora
+    sudo dnf install alsa-lib-devel
+
+    # Arch
+    sudo pacman -S alsa-lib
+    ```
+  </Accordion>
+
+  <Accordion title="C++ compiler not found">
+    **Symptoms:** `error: failed to run custom build command for 'oc-ffi'`
+
+    **Solution:**
+    - Linux: Install `build-essential` (Debian/Ubuntu) or `base-devel` (Arch)
+    - Windows: Install Visual Studio with C++ workload
+    - macOS: Run `xcode-select --install`
+  </Accordion>
+
+  <Accordion title="Out of memory during build">
+    **Symptoms:** Build crashes or system freezes.
+
+    **Solution:**
+    Reduce parallel compilation:
+    ```bash
+    cargo build --release -j 2
+    ```
+    Or set in `.cargo/config.toml`:
+    ```toml
+    [build]
+    jobs = 2
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## CI/CD integration
+
+The project uses GitHub Actions for continuous integration. See `.github/workflows/ci.yml`:
+
+```yaml
+- name: Build workspace
+  run: cargo build --workspace
+
+- name: Run tests
+  run: cargo test --workspace
+```
+
+Key CI steps:
+1. Install system dependencies (ALSA on Linux)
+2. Install Rust toolchain (stable channel)
+3. Cache cargo registry and build artifacts
+4. Build all workspace crates
+5. Run tests for each component
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Project structure" icon="folder-tree" href="/dev/project-structure">
+    Learn about the codebase organization
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+    Start contributing to the project
+  </Card>
+</CardGroup>

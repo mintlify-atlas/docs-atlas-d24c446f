@@ -1,0 +1,439 @@
+---
+title: "oc_spu"
+description: "Synergistic Processing Unit emulation"
+---
+
+The `oc_spu` crate implements the Cell BE SPU subsystem. The PS3 has 8 SPUs (6 usable), each with 256 KB local storage and 128-bit SIMD registers.
+
+## Overview
+
+Each SPU consists of:
+
+- 256 KB local storage (private memory)
+- 128 × 128-bit registers
+- Memory Flow Controller (MFC) for DMA
+- Channel interface for communication
+
+## SpuInterpreter
+
+The SPU instruction interpreter.
+
+### Creation
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new SPU interpreter.
+  
+  ```rust
+  use oc_spu::SpuInterpreter;
+  
+  let interpreter = SpuInterpreter::new();
+  ```
+</ParamField>
+
+### Execution
+
+<ParamField path="step" type="fn(&self, thread: &mut SpuThread) -> Result<(), SpuError>">
+  Executes a single SPU instruction.
+  
+  ```rust
+  loop {
+      match interpreter.step(&mut spu_thread) {
+          Ok(()) => continue,
+          Err(SpuError::InvalidInstruction { addr, opcode }) => {
+              eprintln!("Invalid instruction at 0x{:05x}: 0x{:08x}", addr, opcode);
+              break;
+          }
+          Err(e) => return Err(e),
+      }
+  }
+  ```
+</ParamField>
+
+## SpuThread
+
+Represents an SPU thread with its local storage and register state.
+
+### Creation
+
+<ParamField path="new" type="fn(id: u32, memory: Arc<MemoryManager>) -> Self">
+  Creates a new SPU thread.
+  
+  ```rust
+  use oc_spu::SpuThread;
+  
+  let spu = SpuThread::new(0, memory);
+  ```
+</ParamField>
+
+<ParamField path="new_with_config" type="fn(id: u32, memory: Arc<MemoryManager>, entry_point: u32, arg: u64, priority: SpuPriority) -> Self">
+  Creates an SPU thread with full configuration.
+  
+  ```rust
+  use oc_spu::{SpuThread, SpuPriority};
+  
+  let spu = SpuThread::new_with_config(
+      0,
+      memory,
+      0x0,        // Entry point in local storage
+      0xDEAD,     // Argument
+      SpuPriority::NORMAL,
+  );
+  ```
+</ParamField>
+
+### Local storage access
+
+<ParamField path="ls_read_u32" type="fn(&self, addr: u32) -> u32">
+  Reads a 32-bit word from local storage (big-endian).
+  
+  ```rust
+  let value = spu.ls_read_u32(0x100);
+  ```
+</ParamField>
+
+<ParamField path="ls_write_u32" type="fn(&mut self, addr: u32, value: u32)">
+  Writes a 32-bit word to local storage (big-endian).
+  
+  ```rust
+  spu.ls_write_u32(0x100, 0x12345678);
+  ```
+</ParamField>
+
+<ParamField path="ls_read_u128" type="fn(&self, addr: u32) -> [u32; 4]">
+  Reads a 128-bit quadword from local storage.
+  
+  ```rust
+  let qword = spu.ls_read_u128(0x100);  // Returns [u32; 4]
+  ```
+</ParamField>
+
+<ParamField path="ls_write_u128" type="fn(&mut self, addr: u32, value: [u32; 4])">
+  Writes a 128-bit quadword to local storage.
+  
+  ```rust
+  spu.ls_write_u128(0x100, [0x11111111, 0x22222222, 0x33333333, 0x44444444]);
+  ```
+</ParamField>
+
+### Program counter
+
+<ParamField path="pc" type="fn(&self) -> u32">
+  Returns the current program counter (within local storage).
+</ParamField>
+
+<ParamField path="set_pc" type="fn(&mut self, addr: u32)">
+  Sets the program counter. Address is masked to local storage size.
+</ParamField>
+
+<ParamField path="advance_pc" type="fn(&mut self)">
+  Advances the program counter by 4 bytes.
+</ParamField>
+
+### Thread control
+
+<ParamField path="start" type="fn(&mut self)">
+  Starts the SPU thread.
+</ParamField>
+
+<ParamField path="stop" type="fn(&mut self)">
+  Stops the SPU thread.
+</ParamField>
+
+<ParamField path="is_running" type="fn(&self) -> bool">
+  Checks if the thread is running.
+</ParamField>
+
+<ParamField path="exit" type="fn(&mut self, value: i32)">
+  Exits the thread with a return value.
+</ParamField>
+
+### Priority and affinity
+
+<ParamField path="set_priority" type="fn(&mut self, priority: SpuPriority)">
+  Sets the thread's priority.
+  
+  ```rust
+  use oc_spu::SpuPriority;
+  
+  spu.set_priority(SpuPriority::HIGH);
+  ```
+</ParamField>
+
+<ParamField path="set_affinity" type="fn(&mut self, affinity: SpuAffinity)">
+  Sets which physical SPU this thread can run on.
+  
+  ```rust
+  use oc_spu::SpuAffinity;
+  
+  spu.set_affinity(SpuAffinity::specific(2));  // Pin to SPU 2
+  ```
+</ParamField>
+
+<ParamField path="can_run_on_spu" type="fn(&self, spu_id: u8) -> bool">
+  Checks if the thread can run on a specific SPU.
+</ParamField>
+
+### Exceptions
+
+<ParamField path="raise_exception" type="fn(&mut self, exception: SpuExceptionType)">
+  Raises an exception on the SPU thread.
+  
+  ```rust
+  use oc_spu::SpuExceptionType;
+  
+  spu.raise_exception(SpuExceptionType::InvalidInstruction);
+  ```
+</ParamField>
+
+<ParamField path="clear_exception" type="fn(&mut self)">
+  Clears the pending exception and resumes execution.
+</ParamField>
+
+### Isolation mode
+
+<ParamField path="enter_isolation" type="fn(&mut self)">
+  Enters isolation mode (secure execution).
+  
+  In isolation mode, the SPU's local storage is encrypted and protected. The PPU cannot access the SPU's memory or registers.
+  
+  ```rust
+  spu.enter_isolation();
+  // Execute secure code
+  spu.exit_isolation();
+  ```
+</ParamField>
+
+<ParamField path="exit_isolation" type="fn(&mut self)">
+  Exits isolation mode and returns to normal operation.
+</ParamField>
+
+<ParamField path="is_isolated" type="fn(&self) -> bool">
+  Checks if the SPU is in isolation mode.
+</ParamField>
+
+## SpuThreadGroup
+
+Manages a group of SPU threads that execute together.
+
+### Creation
+
+<ParamField path="new" type="fn(id: u32, name: &str, num_threads: usize, priority: SpuPriority) -> Self">
+  Creates a new SPU thread group.
+  
+  ```rust
+  use oc_spu::{SpuThreadGroup, SpuPriority};
+  
+  let mut group = SpuThreadGroup::new(
+      1,
+      "physics_group",
+      4,  // 4 SPU threads
+      SpuPriority::NORMAL,
+  );
+  ```
+</ParamField>
+
+### Thread management
+
+<ParamField path="add_thread" type="fn(&mut self, thread_id: u32) -> bool">
+  Adds a thread to the group. Returns false if group is full (max 8 threads).
+  
+  ```rust
+  group.add_thread(0);
+  group.add_thread(1);
+  ```
+</ParamField>
+
+<ParamField path="remove_thread" type="fn(&mut self, thread_id: u32)">
+  Removes a thread from the group.
+</ParamField>
+
+### Group control
+
+<ParamField path="start" type="fn(&mut self)">
+  Starts all threads in the group.
+</ParamField>
+
+<ParamField path="stop" type="fn(&mut self)">
+  Stops all threads in the group.
+</ParamField>
+
+<ParamField path="suspend" type="fn(&mut self)">
+  Suspends the group.
+</ParamField>
+
+<ParamField path="resume" type="fn(&mut self)">
+  Resumes a suspended group.
+</ParamField>
+
+### Event queues
+
+<ParamField path="attach_event_queue" type="fn(&mut self, queue_id: u32)">
+  Attaches an event queue to the group for notifications.
+  
+  ```rust
+  group.attach_event_queue(event_queue_id);
+  ```
+</ParamField>
+
+<ParamField path="detach_event_queue" type="fn(&mut self)">
+  Detaches the event queue from the group.
+</ParamField>
+
+## SpuEventQueue
+
+Event queue for SPU notifications to the PPU.
+
+### Creation
+
+<ParamField path="new" type="fn(id: u32, max_size: usize) -> Self">
+  Creates a new event queue.
+  
+  ```rust
+  use oc_spu::SpuEventQueue;
+  
+  let queue = SpuEventQueue::new(1, 64);  // Queue for 64 events
+  ```
+</ParamField>
+
+### Queue operations
+
+<ParamField path="push" type="fn(&mut self, event: SpuEvent) -> bool">
+  Pushes an event to the queue. Returns false if queue is full.
+  
+  ```rust
+  use oc_spu::{SpuEvent, SpuEventType};
+  
+  let event = SpuEvent {
+      source: 0,
+      data: 0x42,
+      event_type: SpuEventType::ThreadFinish,
+  };
+  
+  if queue.push(event) {
+      println!("Event queued");
+  }
+  ```
+</ParamField>
+
+<ParamField path="pop" type="fn(&mut self) -> Option<SpuEvent>">
+  Pops an event from the queue (FIFO order).
+  
+  ```rust
+  if let Some(event) = queue.pop() {
+      println!("Received event from SPU {}", event.source);
+  }
+  ```
+</ParamField>
+
+<ParamField path="is_empty" type="fn(&self) -> bool">
+  Checks if the queue is empty.
+</ParamField>
+
+<ParamField path="len" type="fn(&self) -> usize">
+  Returns the number of events in the queue.
+</ParamField>
+
+## Types
+
+### SpuPriority
+
+<ResponseField name="SpuPriority" type="struct">
+  SPU thread priority (0-255, lower is higher priority)
+  
+  ```rust
+  pub struct SpuPriority(pub u8);
+  
+  impl SpuPriority {
+      pub const HIGHEST: Self = Self(0);
+      pub const HIGH: Self = Self(64);
+      pub const NORMAL: Self = Self(128);
+      pub const LOW: Self = Self(192);
+      pub const LOWEST: Self = Self(255);
+  }
+  ```
+</ResponseField>
+
+### SpuAffinity
+
+<ResponseField name="SpuAffinity" type="struct">
+  SPU affinity mask (which physical SPUs a thread can run on)
+  
+  ```rust
+  pub struct SpuAffinity(pub u8);
+  
+  impl SpuAffinity {
+      pub const ANY: Self = Self(0x3F);  // All 6 usable SPUs
+      
+      pub fn specific(spu_id: u8) -> Self {
+          Self(1 << spu_id)
+      }
+  }
+  ```
+</ResponseField>
+
+### SpuThreadState
+
+<ResponseField name="SpuThreadState" type="enum">
+  SPU thread execution state
+  
+  - `Stopped` - Thread is stopped
+  - `Running` - Thread is running
+  - `Waiting` - Thread is waiting on channel
+  - `Halted` - Thread halted (stop instruction)
+  - `Ready` - Thread is ready to run
+  - `Exception` - Thread has pending exception
+  - `Isolated` - Thread is in isolation mode
+</ResponseField>
+
+### SpuExceptionType
+
+<ResponseField name="SpuExceptionType" type="enum">
+  SPU exception types
+  
+  - `InvalidInstruction` - Invalid instruction decoded
+  - `MemoryViolation` - Memory access violation
+  - `ChannelError` - Channel operation error
+  - `DmaError` - DMA transfer error
+  - `StopSignal(u32)` - Stop and signal with value
+  - `Halt` - Halt instruction executed
+  - `IsolationError` - Isolation mode error
+</ResponseField>
+
+### SpuEventType
+
+<ResponseField name="SpuEventType" type="enum">
+  SPU event types for event queues
+  
+  - `ThreadFinish` - Thread finished execution
+  - `StopSignal` - Thread stopped with signal
+  - `DmaComplete` - DMA transfer completed
+  - `MailboxReady` - Mailbox message available
+  - `Exception` - Exception occurred
+  - `GroupFinish` - Thread group finished
+</ResponseField>
+
+### Mfc
+
+<ResponseField name="Mfc" type="struct">
+  Memory Flow Controller for DMA operations
+  
+  The MFC handles data transfers between SPU local storage and main memory.
+  
+  ```rust
+  pub struct Mfc {
+      // DMA queue entries
+      // MFC command handling
+      // Transfer state tracking
+  }
+  ```
+</ResponseField>
+
+## Constants
+
+<ResponseField name="SPU_LS_SIZE" type="usize">
+  SPU local storage size: 262,144 bytes (256 KB)
+</ResponseField>
+
+<ResponseField name="MAX_SPU_THREADS_PER_GROUP" type="usize">
+  Maximum SPU threads per group: 8
+</ResponseField>

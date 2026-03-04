@@ -1,0 +1,496 @@
+---
+title: "oc_loader"
+description: "ELF/SELF loader for PS3 executables"
+---
+
+The `oc_loader` crate handles loading PS3 executables and libraries:
+
+- **ELF files** - Plain executables
+- **SELF files** - Encrypted executables (signed/encrypted ELF)
+- **PRX files** - Loadable modules (shared libraries)
+- **PUP files** - Firmware updates
+- **PKG files** - Game packages
+
+## ElfLoader
+
+Loads standard ELF64 files (PowerPC 64-bit big-endian).
+
+### Creation
+
+<ParamField path="new" type="fn<R: Read + Seek>(reader: &mut R) -> Result<Self, LoaderError>">
+  Creates a new ELF loader by parsing the file.
+  
+  ```rust
+  use oc_loader::ElfLoader;
+  use std::fs::File;
+  
+  let mut file = File::open("EBOOT.BIN")?;
+  let elf = ElfLoader::new(&mut file)?;
+  
+  println!("Entry point: 0x{:x}", elf.entry_point);
+  println!("Program headers: {}", elf.phdrs.len());
+  ```
+</ParamField>
+
+### Loading
+
+<ParamField path="load_segments" type="fn<R: Read + Seek>(&self, reader: &mut R, memory: &Arc<MemoryManager>, base_addr: u32) -> Result<(), LoaderError>">
+  Loads all LOAD segments into memory at the specified base address.
+  
+  ```rust
+  use oc_memory::MemoryManager;
+  
+  let memory = MemoryManager::new()?;
+  elf.load_segments(&mut file, &memory, 0x01000000)?;
+  println!("ELF loaded at 0x01000000");
+  ```
+</ParamField>
+
+### ELF structures
+
+<ResponseField name="Elf64Header" type="struct">
+  ELF file header (64-bit)
+  
+  ```rust
+  pub struct Elf64Header {
+      pub e_ident: [u8; 16],
+      pub e_type: u16,
+      pub e_machine: u16,
+      pub e_version: u32,
+      pub e_entry: u64,
+      pub e_phoff: u64,        // Program header table offset
+      pub e_shoff: u64,        // Section header table offset
+      pub e_flags: u32,
+      pub e_ehsize: u16,
+      pub e_phentsize: u16,
+      pub e_phnum: u16,        // Number of program headers
+      pub e_shentsize: u16,
+      pub e_shnum: u16,        // Number of section headers
+      pub e_shstrndx: u16,
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="Elf64Phdr" type="struct">
+  Program header (64-bit)
+  
+  ```rust
+  pub struct Elf64Phdr {
+      pub p_type: u32,
+      pub p_flags: u32,
+      pub p_offset: u64,       // Offset in file
+      pub p_vaddr: u64,        // Virtual address
+      pub p_paddr: u64,
+      pub p_filesz: u64,       // Size in file
+      pub p_memsz: u64,        // Size in memory
+      pub p_align: u64,
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="Symbol" type="struct">
+  Parsed symbol information
+  
+  ```rust
+  pub struct Symbol {
+      pub name: String,
+      pub value: u64,
+      pub size: u64,
+      pub bind: u8,           // STB_LOCAL, STB_GLOBAL, STB_WEAK
+      pub sym_type: u8,       // STT_NOTYPE, STT_FUNC, STT_OBJECT
+      pub section: u16,
+  }
+  ```
+</ResponseField>
+
+## SelfLoader
+
+Loads SELF (Signed ELF) files with decryption support.
+
+### Creation
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new SELF loader without decryption keys.
+  
+  ```rust
+  use oc_loader::SelfLoader;
+  
+  let loader = SelfLoader::new();
+  ```
+</ParamField>
+
+<ParamField path="with_firmware" type="fn(firmware_path: &str) -> Result<Self, LoaderError>">
+  Creates a loader with firmware keys extracted from a PUP file.
+  
+  ```rust
+  let loader = SelfLoader::with_firmware("/path/to/PS3UPDAT.PUP")?;
+  ```
+</ParamField>
+
+<ParamField path="with_keys_file" type="fn(keys_path: &str) -> Result<Self, LoaderError>">
+  Creates a loader with keys from a keys.txt file.
+  
+  ```rust
+  let loader = SelfLoader::with_keys_file("/path/to/keys.txt")?;
+  ```
+</ParamField>
+
+### Decryption
+
+<ParamField path="decrypt" type="fn(&self, data: &[u8]) -> Result<Vec<u8>, LoaderError>">
+  Decrypts a SELF file and extracts the ELF data.
+  
+  ```rust
+  use std::fs;
+  
+  let self_data = fs::read("EBOOT.BIN")?;
+  let elf_data = loader.decrypt(&self_data)?;
+  
+  // Now parse as ELF
+  let mut cursor = std::io::Cursor::new(&elf_data);
+  let elf = ElfLoader::new(&mut cursor)?;
+  ```
+</ParamField>
+
+<ParamField path="is_self" type="fn(data: &[u8]) -> bool">
+  Checks if data is a SELF file (checks for SCE magic).
+  
+  ```rust
+  if SelfLoader::is_self(&data) {
+      println!("This is a SELF file");
+  } else {
+      println!("This is a plain ELF file");
+  }
+  ```
+</ParamField>
+
+<ParamField path="has_keys" type="fn(&self) -> bool">
+  Checks if decryption keys are available.
+  
+  ```rust
+  if !loader.has_keys() {
+      eprintln!("Warning: No decryption keys loaded");
+  }
+  ```
+</ParamField>
+
+<ParamField path="verify_decryption" type="fn(&self, data: &[u8]) -> Result<bool, LoaderError>">
+  Verifies that a SELF file can be decrypted with the current keys.
+  
+  Returns `Ok(true)` if decryption produces valid ELF data, `Ok(false)` if wrong keys.
+  
+  ```rust
+  match loader.verify_decryption(&self_data) {
+      Ok(true) => println!("Decryption successful"),
+      Ok(false) => println!("Wrong keys for this SELF"),
+      Err(e) => eprintln!("Error: {}", e),
+  }
+  ```
+</ParamField>
+
+### SELF structures
+
+<ResponseField name="SelfHeader" type="struct">
+  SELF file header
+  
+  ```rust
+  pub struct SelfHeader {
+      pub magic: [u8; 4],      // "SCE\0"
+      pub version: u32,
+      pub key_type: u16,
+      pub header_type: u16,
+      pub metadata_offset: u32,
+      pub header_len: u64,
+      pub data_len: u64,
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="AppInfo" type="struct">
+  SELF application info
+  
+  ```rust
+  pub struct AppInfo {
+      pub auth_id: u64,
+      pub vendor_id: u32,
+      pub self_type: u32,      // 1=LV0, 2=LV1, 3=LV2, 4=APP, 8=NPDRM
+      pub version: u64,
+      pub padding: u64,
+  }
+  ```
+</ResponseField>
+
+## PrxLoader
+
+Loads PRX (PS3 shared library) modules with import/export resolution.
+
+### Creation
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new PRX loader.
+  
+  ```rust
+  use oc_loader::PrxLoader;
+  
+  let mut loader = PrxLoader::new();
+  ```
+</ParamField>
+
+### Module loading
+
+<ParamField path="load_module" type="fn<R: Read + Seek>(&mut self, name: String, reader: &mut R, memory: &Arc<MemoryManager>, base_addr: u32) -> Result<PrxModule, LoaderError>">
+  Loads a PRX module from ELF data.
+  
+  ```rust
+  use std::fs::File;
+  
+  let mut file = File::open("libsysutil.prx")?;
+  let module = loader.load_module(
+      "libsysutil".to_string(),
+      &mut file,
+      &memory,
+      0x90000000,
+  )?;
+  
+  println!("Loaded {} exports, {} imports",
+           module.exports.len(),
+           module.imports.len());
+  ```
+</ParamField>
+
+### Symbol resolution
+
+<ParamField path="resolve_nid_to_name" type="fn(&self, nid: u32) -> Option<&str>">
+  Resolves a NID (Name ID hash) to a function name using the built-in database.
+  
+  ```rust
+  if let Some(name) = loader.resolve_nid_to_name(0x9FB6228E) {
+      println!("NID 0x9FB6228E = {}", name);  // sys_ppu_thread_create
+  }
+  ```
+</ParamField>
+
+<ParamField path="add_nid_mapping" type="fn(&mut self, nid: u32, name: String)">
+  Adds a custom NID mapping.
+  
+  ```rust
+  loader.add_nid_mapping(0x12345678, "my_custom_function".to_string());
+  ```
+</ParamField>
+
+### Stub libraries
+
+<ParamField path="create_stub_library" type="fn(&mut self, name: String, version: u32) -> &mut StubLibrary">
+  Creates a stub library for unresolved imports.
+  
+  ```rust
+  let stub_lib = loader.create_stub_library("cellGcmSys".to_string(), 0x10000);
+  ```
+</ParamField>
+
+<ParamField path="add_stub_function" type="fn(&mut self, library_name: &str, nid: u32, func_name: String, stub_addr: u32, return_value: i64)">
+  Adds a stub function that returns a default value.
+  
+  ```rust
+  loader.add_stub_function(
+      "cellGcmSys",
+      0x21AC3697,
+      "cellGcmInit".to_string(),
+      0x90000000,
+      0,  // Return CELL_OK
+  );
+  ```
+</ParamField>
+
+### PRX structures
+
+<ResponseField name="PrxModule" type="struct">
+  Loaded PRX module information
+  
+  ```rust
+  pub struct PrxModule {
+      pub name: String,
+      pub version: u32,
+      pub base_addr: u32,
+      pub entry_point: u64,
+      pub exports: Vec<PrxExport>,
+      pub imports: Vec<PrxImport>,
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="PrxExport" type="struct">
+  Exported function or variable
+  
+  ```rust
+  pub struct PrxExport {
+      pub name: String,
+      pub nid: u32,              // Name ID (hash)
+      pub address: u64,
+      pub export_type: ExportType,  // Function or Variable
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="PrxImport" type="struct">
+  Imported function or variable
+  
+  ```rust
+  pub struct PrxImport {
+      pub name: String,
+      pub nid: u32,
+      pub module: String,        // Source module name
+      pub import_type: ImportType,
+      pub stub_addr: u32,
+      pub resolved_addr: Option<u64>,
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="PrxLoadingStats" type="struct">
+  Loading statistics
+  
+  ```rust
+  pub struct PrxLoadingStats {
+      pub modules_loaded: u32,
+      pub exports_resolved: u32,
+      pub imports_resolved: u32,
+      pub unresolved_imports: u32,
+      pub nids_resolved_via_db: u32,
+      pub stubs_created: u32,
+  }
+  ```
+</ResponseField>
+
+## CryptoEngine
+
+Handles SELF decryption and key management.
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new crypto engine.
+</ParamField>
+
+<ParamField path="load_firmware_keys" type="fn(&mut self, pup_path: &str) -> Result<(), LoaderError>">
+  Loads decryption keys from a PS3 firmware PUP file.
+  
+  ```rust
+  use oc_loader::CryptoEngine;
+  
+  let mut crypto = CryptoEngine::new();
+  crypto.load_firmware_keys("/path/to/PS3UPDAT.PUP")?;
+  ```
+</ParamField>
+
+<ParamField path="load_keys_file" type="fn(&mut self, keys_path: &str) -> Result<(), LoaderError>">
+  Loads keys from a keys.txt file.
+</ParamField>
+
+<ParamField path="has_firmware_keys" type="fn(&self) -> bool">
+  Checks if firmware keys are loaded.
+</ParamField>
+
+<ParamField path="self_key_count" type="fn(&self) -> usize">
+  Returns the number of SELF decryption keys loaded.
+</ParamField>
+
+## PupLoader
+
+Loads PS3 firmware update (PUP) files.
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new PUP loader.
+</ParamField>
+
+<ParamField path="load" type="fn<R: Read + Seek>(&mut self, reader: &mut R) -> Result<(), LoaderError>">
+  Loads and parses a PUP file.
+  
+  ```rust
+  use oc_loader::PupLoader;
+  use std::fs::File;
+  
+  let mut file = File::open("PS3UPDAT.PUP")?;
+  let mut pup = PupLoader::new();
+  pup.load(&mut file)?;
+  
+  println!("Firmware version: {}.{}", pup.major_version(), pup.minor_version());
+  ```
+</ParamField>
+
+## PkgLoader
+
+Loads PS3 package (PKG) files.
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a new PKG loader.
+</ParamField>
+
+<ParamField path="load" type="fn<R: Read + Seek>(&mut self, reader: &mut R) -> Result<(), LoaderError>">
+  Loads and parses a PKG file.
+  
+  ```rust
+  use oc_loader::PkgLoader;
+  use std::fs::File;
+  
+  let mut file = File::open("game.pkg")?;
+  let mut pkg = PkgLoader::new();
+  pkg.load(&mut file)?;
+  
+  println!("Package type: {:?}", pkg.pkg_type());
+  println!("Content ID: {}", pkg.content_id());
+  ```
+</ParamField>
+
+## Error types
+
+<ResponseField name="LoaderError" type="enum">
+  Loader errors
+  
+  - `InvalidElf(String)` - Invalid ELF file
+  - `InvalidSelf(String)` - Invalid SELF file
+  - `DecryptionFailed(String)` - Decryption failed
+  - `MissingPrx(String)` - PRX module not found
+  - `MissingModule(String)` - Required module not found
+  - `InvalidPkg(String)` - Invalid PKG file
+  - `InvalidPup(String)` - Invalid PUP file
+  - `InvalidFirmware(String)` - Invalid firmware
+  - `UnsupportedFormat(String)` - Unsupported file format
+</ResponseField>
+
+## Example: Loading a game
+
+```rust
+use oc_loader::{SelfLoader, ElfLoader};
+use oc_memory::MemoryManager;
+use std::fs;
+
+// Read EBOOT.BIN
+let data = fs::read("/dev_hdd0/game/NPEB00000/USRDIR/EBOOT.BIN")?;
+
+// Check if it's a SELF file
+if SelfLoader::is_self(&data) {
+    // Load decryption keys
+    let loader = SelfLoader::with_firmware("/path/to/PS3UPDAT.PUP")?;
+    
+    // Decrypt SELF
+    let elf_data = loader.decrypt(&data)?;
+    
+    // Parse ELF
+    let mut cursor = std::io::Cursor::new(&elf_data);
+    let elf = ElfLoader::new(&mut cursor)?;
+    
+    // Load into memory
+    let memory = MemoryManager::new()?;
+    elf.load_segments(&mut cursor, &memory, 0x01000000)?;
+    
+    println!("Game loaded! Entry point: 0x{:x}", elf.entry_point);
+} else {
+    // Plain ELF file (homebrew)
+    let mut cursor = std::io::Cursor::new(&data);
+    let elf = ElfLoader::new(&mut cursor)?;
+    
+    let memory = MemoryManager::new()?;
+    elf.load_segments(&mut cursor, &memory, 0x01000000)?;
+    
+    println!("Homebrew loaded! Entry point: 0x{:x}", elf.entry_point);
+}
+```

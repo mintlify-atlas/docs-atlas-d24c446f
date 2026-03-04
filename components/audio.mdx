@@ -1,0 +1,346 @@
+---
+title: Audio system
+description: Cross-platform audio emulation with cpal backend
+---
+
+The audio system emulates the PS3's audio hardware, providing 8 audio ports with multi-channel support and a 48 kHz sample rate. Oxidized-cell uses the cpal backend for cross-platform audio output.
+
+## Overview
+
+The audio component (`oc-audio`) implements:
+
+- **8 audio ports**: Independent audio channels
+- **Multi-channel support**: Up to 8 channels per port
+- **48 kHz sample rate**: CD-quality audio
+- **cpal backend**: Cross-platform audio API
+- **Mixing**: Combine multiple audio sources
+- **Resampling**: Convert between sample rates
+- **Time stretching**: Maintain audio pitch during speed changes
+
+```rust
+pub use thread::AudioThread;
+```
+
+## Architecture
+
+The audio system is organized into:
+
+- **thread**: Audio processing thread
+- **backend**: Platform audio backends (cpal, null)
+- **cell_audio**: PS3 cellAudio API emulation
+- **codec**: Audio codec support
+- **mixer**: Audio mixing and routing
+- **resampler**: Sample rate conversion
+- **spdif**: S/PDIF digital audio output
+- **time_stretch**: Time-domain audio stretching
+
+## Audio thread
+
+The `AudioThread` processes audio data:
+
+```rust
+use oc_audio::AudioThread;
+use std::sync::Arc;
+
+let audio = AudioThread::new(
+    memory.clone(),
+    config.audio.clone(),
+)?;
+
+// Start audio processing
+audio.run();
+```
+
+### Processing loop
+
+The audio thread:
+
+1. **Read audio data** from PS3 memory buffers
+2. **Decode** audio format (PCM, AAC, etc.)
+3. **Resample** to output sample rate if needed
+4. **Mix** multiple audio sources
+5. **Apply effects** (time stretch, etc.)
+6. **Output** to audio device via cpal
+
+## Audio ports
+
+PS3 provides 8 audio ports (0-7):
+
+```rust
+// cellAudioPortOpen
+let port_id = 0;
+let num_channels = 2;  // Stereo
+let num_blocks = 8;
+let attr = 0;  // PCM 16-bit
+
+// Port configuration
+let port = AudioPort {
+    id: port_id,
+    channels: num_channels,
+    blocks: num_blocks,
+    format: AudioFormat::Pcm16,
+    buffer: vec![0; block_size * num_blocks],
+};
+```
+
+### Port configuration
+
+<Accordion title="Port parameters">
+- **Port ID**: 0-7 (up to 8 ports)
+- **Channels**: 1 (mono), 2 (stereo), 6 (5.1), 8 (7.1)
+- **Blocks**: Number of audio blocks (frames)
+- **Block size**: 256 samples per block
+- **Format**: PCM 16-bit, float, compressed
+</Accordion>
+
+## Audio formats
+
+Supported audio formats:
+
+| Format | Description | Channels |
+|--------|-------------|----------|
+| PCM 16-bit | Signed 16-bit PCM | 1-8 |
+| Float | 32-bit float | 1-8 |
+| AAC | Advanced Audio Codec | 1-8 |
+| AC3 | Dolby Digital | 1-6 |
+| DTS | Digital Theater System | 1-6 |
+
+## Mixing
+
+The mixer combines multiple audio sources:
+
+```rust
+use oc_audio::mixer::Mixer;
+
+let mut mixer = Mixer::new(
+    output_channels,
+    sample_rate,
+);
+
+// Add audio source
+mixer.add_source(port_id, samples);
+
+// Mix all sources
+let output = mixer.mix();
+```
+
+### Mixing algorithm
+
+1. **Sum** all input samples
+2. **Clamp** to valid range [-1.0, 1.0]
+3. **Apply volume** per-port
+4. **Route** to output channels
+
+<Note>
+Audio mixing uses floating-point math to avoid clipping, then converts to 16-bit for output.
+</Note>
+
+## Resampling
+
+The resampler converts between sample rates:
+
+```rust
+use oc_audio::resampler::Resampler;
+
+let resampler = Resampler::new(
+    input_rate,   // 48000 Hz (PS3)
+    output_rate,  // 44100 Hz (system)
+    channels,
+)?;
+
+let resampled = resampler.process(input_samples)?;
+```
+
+### Resampling quality
+
+<Tabs>
+  <Tab title="Linear">
+    Fast, low-quality resampling using linear interpolation.
+    - Latency: ~1ms
+    - CPU usage: Low
+    - Quality: Acceptable for game audio
+  </Tab>
+  <Tab title="Sinc">
+    High-quality resampling using windowed sinc interpolation.
+    - Latency: ~5ms
+    - CPU usage: Medium
+    - Quality: Excellent for music
+  </Tab>
+</Tabs>
+
+## Time stretching
+
+Time stretching adjusts audio speed without pitch shift:
+
+```rust
+use oc_audio::time_stretch::TimeStretch;
+
+let stretcher = TimeStretch::new(
+    sample_rate,
+    channels,
+)?;
+
+// Stretch to 1.5x speed (no pitch change)
+let stretched = stretcher.process(
+    input_samples,
+    1.5,  // Speed factor
+)?;
+```
+
+### Use cases
+
+- **Frame rate adjustment**: Match audio to variable frame rate
+- **Fast forward**: Speed up audio during fast forward
+- **Slow motion**: Slow down audio during slow motion
+
+## cpal backend
+
+The cpal backend provides cross-platform audio:
+
+```rust
+use oc_audio::backend::cpal_backend::CpalBackend;
+
+let backend = CpalBackend::new(
+    sample_rate,
+    channels,
+    buffer_size,
+)?;
+
+// Write audio samples
+backend.write_samples(&samples)?;
+```
+
+### Platform support
+
+<CardGroup cols={3}>
+  <Card title="Linux" icon="linux">
+    ALSA, PulseAudio, JACK
+  </Card>
+  <Card title="Windows" icon="windows">
+    WASAPI, DirectSound
+  </Card>
+  <Card title="macOS" icon="apple">
+    CoreAudio
+  </Card>
+</CardGroup>
+
+## cellAudio API
+
+The cellAudio module emulates PS3 audio API:
+
+<Accordion title="cellAudioInit">
+Initialize audio system:
+```rust
+cellAudioInit()?;
+```
+</Accordion>
+
+<Accordion title="cellAudioPortOpen">
+Open audio port:
+```rust
+let port_id = cellAudioPortOpen(
+    &mut port_param,
+)?;
+```
+</Accordion>
+
+<Accordion title="cellAudioGetPortConfig">
+Get port configuration:
+```rust
+let config = cellAudioGetPortConfig(port_id)?;
+```
+</Accordion>
+
+<Accordion title="cellAudioPortStart">
+Start audio output:
+```rust
+cellAudioPortStart(port_id)?;
+```
+</Accordion>
+
+<Accordion title="cellAudioPortStop">
+Stop audio output:
+```rust
+cellAudioPortStop(port_id)?;
+```
+</Accordion>
+
+<Accordion title="cellAudioPortClose">
+Close audio port:
+```rust
+cellAudioPortClose(port_id)?;
+```
+</Accordion>
+
+## Configuration
+
+Audio settings in `config.toml`:
+
+```toml
+[audio]
+backend = "cpal"        # Audio backend
+volume = 100            # Master volume (0-100)
+sample_rate = 48000     # Output sample rate
+latency_ms = 100        # Output latency
+stretch = true          # Enable time stretching
+```
+
+### Latency tuning
+
+Lower latency = less delay, higher CPU usage:
+
+| Latency | Use case |
+|---------|----------|
+| 50ms | Low-latency gaming |
+| 100ms | Balanced (default) |
+| 200ms | High-latency music |
+
+## Performance
+
+<CardGroup cols={2}>
+  <Card title="Buffer size" icon="buffer">
+    Larger buffers reduce CPU usage but increase latency
+  </Card>
+  <Card title="Resampling" icon="waveform">
+    Sinc resampling uses more CPU than linear
+  </Card>
+  <Card title="Mixing" icon="sliders">
+    Mixing cost scales with number of active ports
+  </Card>
+  <Card title="Time stretch" icon="clock">
+    Stretching adds ~5% CPU overhead
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<Accordion title="No audio output">
+1. Check audio device is not muted
+2. Verify cpal backend initialized successfully
+3. Ensure audio port is started
+4. Check volume is not 0
+</Accordion>
+
+<Accordion title="Crackling/stuttering">
+1. Increase latency_ms in config
+2. Reduce resampling quality
+3. Disable time stretching
+4. Check CPU usage
+</Accordion>
+
+<Accordion title="Wrong sample rate">
+1. Verify config sample_rate matches system
+2. Check resampler is enabled
+3. Test with different sample rate
+</Accordion>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/guide/configuration">
+    Audio configuration options
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/guide/troubleshooting">
+    Audio troubleshooting guide
+  </Card>
+</CardGroup>

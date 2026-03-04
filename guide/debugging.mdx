@@ -1,0 +1,483 @@
+---
+title: Debugging
+description: Debug and analyze PS3 games using oxidized-cell debugging tools
+---
+
+The oxidized-cell emulator includes comprehensive debugging tools for analyzing game behavior, tracking down bugs, and understanding PS3 system internals.
+
+## Debug configuration
+
+Enable debugging features in your `config.toml`:
+
+```toml config.toml
+[debug]
+log_level = "Debug"       # Set to Debug or Trace for detailed output
+log_to_file = true        # Save logs to file
+log_path = "oxidized-cell.log"
+dump_shaders = true       # Save shader code to files
+trace_ppu = false         # Enable PPU instruction tracing
+trace_spu = false         # Enable SPU instruction tracing  
+trace_rsx = false         # Enable RSX command tracing
+breakpoints = []          # Execution breakpoints
+```
+
+<Warning>
+Enabling instruction tracing (PPU/SPU/RSX) generates massive logs and significantly impacts performance. Only enable for specific debugging sessions.
+</Warning>
+
+## Log levels
+
+Choose the appropriate log level for your debugging needs:
+
+| Level | Description | Use Case |
+|-------|-------------|----------|
+| **Off** | No logging | Production, benchmarking |
+| **Error** | Critical errors only | Minimal output, track crashes |
+| **Warn** | Warnings and errors | Monitor potential issues |
+| **Info** | General information | Normal operation, track progress |
+| **Debug** | Detailed debugging | Investigate behavior, timing issues |
+| **Trace** | All instructions | Instruction-level debugging |
+
+<Note>
+**Debug** level is a good balance between detail and performance for most debugging tasks.
+</Note>
+
+## PPU debugging
+
+The PPU (PowerPC Processing Unit) debugger provides instruction-level debugging of game code.
+
+### Breakpoints
+
+Set execution breakpoints at specific addresses:
+
+```toml config.toml
+[debug]
+breakpoints = [
+    0x10000000,  # Game entry point
+    0x10002000,  # Suspect function
+    0x20000000,  # Specific address
+]
+```
+
+When a breakpoint is hit:
+```
+[INFO] PPU debugger: breakpoint hit at 0x10000000
+[DEBUG] PPU paused, ready for inspection
+```
+
+### Instruction tracing
+
+Enable PPU instruction tracing to log every instruction executed:
+
+```toml config.toml
+[debug]
+trace_ppu = true
+```
+
+Trace output includes:
+```
+[TRACE] PPU[0] 0x10000000: 38600064  li r3, 100
+[TRACE] PPU[0] 0x10000004: 38800032  li r4, 50
+[TRACE] PPU[0] 0x10000008: 7C631A14  add r3, r3, r4
+[TRACE] PPU[0] 0x1000000C: 4E800020  blr
+```
+
+Each entry shows:
+- **PPU thread ID**: `PPU[0]`
+- **Address**: `0x10000000`
+- **Opcode**: `38600064` (hex)
+- **Disassembly**: `li r3, 100`
+
+### Register inspection
+
+The debugger captures register state at breakpoints:
+
+```rust
+Register Snapshot:
+  GPR[0]  = 0x0000000000000000
+  GPR[1]  = 0x00000000D0010000  (Stack Pointer)
+  GPR[2]  = 0x0000000010020000  (TOC)
+  GPR[3]  = 0x0000000000000064  (arg0/return)
+  ...
+  LR      = 0x0000000010001234  (Link Register)
+  CTR     = 0x0000000000000000  (Count Register)
+  CR      = 0x00000000           (Condition Register)
+  PC      = 0x0000000010000000  (Program Counter)
+```
+
+### Call stack tracking
+
+The debugger tracks function calls and returns:
+
+```
+[TRACE] PPU call: 0x10000000 -> 0x10002000
+[TRACE] PPU call: 0x10002010 -> 0x10003000  
+[TRACE] PPU return to 0x10002014
+[TRACE] PPU return to 0x10000004
+```
+
+Call stack at breakpoint:
+```
+Call Stack:
+#0  0x10003000  (current function)
+#1  0x10002010  (caller)
+#2  0x10000000  (main)
+```
+
+### Watch expressions
+
+Monitor specific registers or memory locations:
+
+```rust
+Watch Expressions:
+  r3         = 0x0000000000000064  (unchanged)
+  r4         = 0x0000000000000032  (changed!)
+  [0x10020000] = 0x12345678        (unchanged)
+  LR         = 0x0000000010001234  (changed!)
+```
+
+### Disassembly
+
+Disassemble memory at any address:
+
+```bash
+cargo run --release -- game.elf --disassemble 0x10000000 --count 10
+```
+
+Output:
+```
+0x10000000: 38600064  li      r3, 100
+0x10000004: 38800032  li      r4, 50  
+0x10000008: 7C631A14  add     r3, r3, r4
+0x1000000C: 4E800020  blr
+...
+```
+
+## SPU debugging
+
+The SPU (Synergistic Processing Unit) debugger tracks the 6 SPU cores.
+
+### SPU instruction tracing
+
+```toml config.toml
+[debug]
+trace_spu = true
+```
+
+Trace output:
+```
+[TRACE] SPU[0] 0x00000: 40800000  il r2, 0
+[TRACE] SPU[0] 0x00004: 40820001  il r4, 1
+[TRACE] SPU[0] 0x00008: 1C020404  ai r2, r2, 1
+[TRACE] SPU[0] 0x0000C: 35000000  bi $lr
+```
+
+### Local Storage viewer
+
+Inspect SPU Local Storage (256KB per SPU):
+
+```
+SPU[0] Local Storage:
+  0x00000: 40 80 00 00 40 82 00 01 1C 02 04 04 35 00 00 00
+  0x00010: 32 7F FF F0 1C 00 08 01 32 7F FF F0 21 00 00 00
+  ...
+```
+
+### MFC debugging
+
+Track Memory Flow Controller DMA operations:
+
+```
+[DEBUG] SPU[0] MFC: DMA put - LS:0x00100 EA:0x10020000 size:0x1000
+[DEBUG] SPU[0] MFC: DMA get - LS:0x02000 EA:0x20000000 size:0x800
+[DEBUG] SPU[0] MFC: Transfer complete
+```
+
+### Channel monitoring
+
+Monitor SPU channel operations:
+
+```
+[DEBUG] SPU[0] Channel read: ch=29 (SPU_RdEventStat)
+[DEBUG] SPU[0] Channel write: ch=28 value=0x00000001 (SPU_WrOutMbox)
+```
+
+## RSX debugging
+
+The RSX (Reality Synthesizer) graphics debugger tracks GPU operations.
+
+### Command buffer tracing
+
+```toml config.toml
+[debug]
+trace_rsx = true
+```
+
+Trace RSX commands:
+```
+[TRACE] RSX: NV4097_SET_VIEWPORT_HORIZONTAL x=0 w=1280
+[TRACE] RSX: NV4097_SET_VIEWPORT_VERTICAL y=0 h=720
+[TRACE] RSX: NV4097_SET_CLEAR_COLOR color=0xFF000000
+[TRACE] RSX: NV4097_CLEAR_SURFACE mask=0xF3
+[TRACE] RSX: NV4097_DRAW_ARRAYS mode=TRIANGLES start=0 count=3
+```
+
+### State inspector
+
+View current RSX state:
+
+```
+RSX State:
+  Viewport: (0, 0) - (1280, 720)
+  Scissors: (0, 0) - (1280, 720)
+  Clear Color: #000000FF
+  Depth Test: enabled
+  Blend: disabled
+  Active Texture Units: 2
+  Active Vertex Attributes: 3
+```
+
+### Shader debugging
+
+Dump shader code for analysis:
+
+```toml config.toml  
+[debug]
+dump_shaders = true
+```
+
+Shaders are saved to `shader_cache/dumps/`:
+- `vertex_shader_0x12345678.glsl` - Vertex shader source
+- `fragment_shader_0x87654321.glsl` - Fragment shader source  
+- `vertex_shader_0x12345678.spv` - Compiled SPIR-V
+
+### Texture viewer
+
+Inspect texture data:
+
+```
+[DEBUG] Texture 0: 512x512 ARGB8 mipmap=true address=0x40000000
+[DEBUG] Texture 1: 1024x1024 DXT1 mipmap=false address=0x40100000
+```
+
+## Memory debugging
+
+### Memory access tracking
+
+```toml config.toml
+[cpu]
+memory_profiling = true
+```
+
+Track memory access patterns:
+```
+[DEBUG] Memory read: 0x10020000 (4 bytes) by PPU[0]
+[DEBUG] Memory write: 0x10020004 (8 bytes) by PPU[0]
+[DEBUG] Memory read: 0x40000000 (16 bytes) by RSX
+```
+
+### Memory viewer
+
+Inspect memory contents:
+
+```bash
+cargo run --release -- game.elf --dump-memory 0x10000000 --size 0x1000
+```
+
+Output:
+```
+0x10000000: 7F 45 4C 46 02 02 01 00 00 00 00 00 00 00 00 00  .ELF............
+0x10000010: 00 02 00 15 00 00 00 01 00 00 00 00 10 00 00 00  ................
+...
+```
+
+### Watchpoints
+
+Break on memory access:
+
+```rust
+// In debugger code:
+debugger.add_memory_watchpoint(0x10020000, 8, WatchType::Write);
+```
+
+When triggered:
+```
+[INFO] Watchpoint hit: write to 0x10020000 (8 bytes) by PPU[0] at 0x10001234
+```
+
+## Performance profiling
+
+### CPU profiling
+
+Profile PPU/SPU execution:
+
+```
+PPU Profiling:
+  Total cycles: 1,234,567,890
+  Instructions: 123,456,789
+  IPC: 0.10
+  
+Hot Functions:
+  0x10002000: 45.2% (render_frame)
+  0x10003000: 23.1% (update_physics)
+  0x10004000: 12.8% (process_input)
+```
+
+### GPU profiling
+
+Track RSX performance:
+
+```
+RSX Profiling:
+  Draw calls: 1,234
+  Triangles: 567,890
+  Shader switches: 56
+  Texture binds: 234
+  Frame time: 16.7ms (60 FPS)
+```
+
+## Debugging workflow
+
+<Steps>
+  <Step title="Enable debug logging">
+    Set log level to Debug or Trace in `config.toml`:
+    ```toml
+    [debug]
+    log_level = "Debug"
+    log_to_file = true
+    ```
+  </Step>
+  
+  <Step title="Run with logging">
+    ```bash
+    cargo run --release -- game.elf 2>&1 | tee debug.log
+    ```
+  </Step>
+  
+  <Step title="Analyze the log">
+    Look for errors, warnings, and unexpected behavior:
+    ```bash
+    # Find errors
+    grep ERROR debug.log
+    
+    # Find warnings  
+    grep WARN debug.log
+    
+    # Track specific function
+    grep "0x10002000" debug.log
+    ```
+  </Step>
+  
+  <Step title="Set breakpoints">
+    Add breakpoints for suspect areas:
+    ```toml
+    breakpoints = [0x10002000, 0x10003000]
+    ```
+  </Step>
+  
+  <Step title="Enable targeted tracing">
+    Enable tracing for specific components:
+    ```toml
+    trace_ppu = true   # If investigating PPU code
+    trace_rsx = true   # If investigating graphics
+    ```
+  </Step>
+  
+  <Step title="Inspect state">
+    When paused, inspect:
+    - Register values
+    - Call stack
+    - Memory contents
+    - Watch expressions
+  </Step>
+</Steps>
+
+## Common debugging scenarios
+
+<Accordion title="Game crashes immediately">
+
+**Debug steps**:
+1. Enable Debug logging
+2. Check for invalid memory access
+3. Look for unimplemented syscalls
+4. Verify ELF loading succeeded
+
+**Typical issues**:
+```
+[ERROR] PPU error: Invalid instruction at 0x10000000: 0x00000000
+[ERROR] Memory error: Invalid address: 0x00000000
+[ERROR] Kernel error: Unknown syscall: 123
+```
+
+</Accordion>
+
+<Accordion title="Graphics not rendering">
+
+**Debug steps**:
+1. Enable RSX tracing: `trace_rsx = true`
+2. Check for RSX commands in log
+3. Enable shader dumping: `dump_shaders = true`
+4. Verify Vulkan initialization
+
+**Look for**:
+```
+[ERROR] RSX error: Shader compilation failed
+[WARN] RSX: No draw commands in frame
+[ERROR] Vulkan error: Device lost
+```
+
+</Accordion>
+
+<Accordion title="Performance issues">
+
+**Debug steps**:
+1. Enable memory profiling
+2. Check cycle counts
+3. Profile hot functions
+4. Monitor SPU usage
+
+**Analysis**:
+```
+[DEBUG] PPU[0]: 1,000,000 cycles (70%)
+[DEBUG] SPU[0]: 500,000 cycles (15%)
+[DEBUG] Hot function at 0x10002000: 45% of time
+```
+
+</Accordion>
+
+<Accordion title="Function not working correctly">
+
+**Debug steps**:
+1. Set breakpoint at function entry
+2. Enable instruction tracing for that function
+3. Inspect register values
+4. Track memory reads/writes
+
+**Workflow**:
+```bash
+# Set breakpoint
+breakpoints = [0x10002000]
+
+# Run and inspect when paused
+# Check r3-r10 (function arguments)
+# Check return value (r3)
+# Verify memory operations
+```
+
+</Accordion>
+
+## Debug UI features
+
+The emulator UI includes interactive debugging tools:
+
+- **Log Viewer** (`Ctrl+L`): Real-time log viewing and filtering
+- **Memory Viewer** (`Ctrl+M`): Hex dump and memory inspection
+- **Register Viewer**: Live PPU/SPU register display
+- **Debugger Panel**: Breakpoint management and stepping
+- **Performance Overlay** (`F12`): FPS, frame time, CPU/GPU usage
+
+## Next steps
+
+- Review [troubleshooting guide](/guide/troubleshooting) for common issues
+- Check [configuration options](/guide/configuration) for debug settings  
+- See [loading games](/guide/loading-games) for proper game setup

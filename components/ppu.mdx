@@ -1,0 +1,466 @@
+---
+title: PPU (PowerPC Processing Unit)
+description: Cell BE PowerPC processor emulation with VMX/AltiVec support, JIT compilation, and cycle-accurate timing
+---
+
+The PPU (PowerPC Processing Unit) is the primary processor in the Cell Broadband Engine architecture. Oxidized-cell implements a complete PPU emulator based on the PowerPC 970 architecture with VMX (AltiVec) SIMD extensions.
+
+## Overview
+
+The PPU emulator (`oc-ppu` crate) provides:
+
+- **PowerPC 970 ISA**: Full instruction set implementation including integer, floating-point, and VMX vector operations
+- **Multiple execution modes**: Interpreter, JIT, and hybrid mode for optimal performance
+- **Thread management**: Complete thread lifecycle with priority scheduling and core affinity
+- **Exception handling**: Full PowerPC exception model with proper state preservation
+- **Cycle-accurate timing**: Optional timing model for precise emulation
+
+## Architecture
+
+### Register Set
+
+The PPU implements a comprehensive register set:
+
+```rust
+pub struct PpuRegisters {
+    pub gpr: [u64; 32],      // General Purpose Registers
+    pub fpr: [f64; 32],      // Floating Point Registers
+    pub vr: [[u32; 4]; 32],  // Vector Registers (128-bit)
+    pub cr: u32,             // Condition Register
+    pub lr: u64,             // Link Register
+    pub ctr: u64,            // Count Register
+    pub xer: u64,            // Fixed-Point Exception Register
+    pub fpscr: u64,          // FP Status and Control Register
+    pub vscr: u32,           // Vector Status and Control Register
+    pub cia: u64,            // Program Counter
+    pub msr: u64,            // Machine State Register
+    pub tb: u64,             // Time Base Register
+    // ... and more
+}
+```
+
+### Thread States
+
+PPU threads can be in one of several states:
+
+- **Stopped**: Thread is not running
+- **Running**: Thread is actively executing
+- **Ready**: Thread is ready to run (waiting for scheduler)
+- **Waiting**: Thread is blocked on a synchronization primitive
+- **Sleeping**: Thread is sleeping for a specified duration
+- **Suspended**: Thread is suspended by the system
+
+## Execution Modes
+
+The PPU supports three execution modes:
+
+### Interpreter Mode
+
+Pure software interpretation of PowerPC instructions. This mode:
+- Always available (no external dependencies)
+- Provides accurate emulation
+- Slower than JIT but simpler
+- Useful for debugging and development
+
+### JIT Mode
+
+Just-In-Time compilation to native code:
+- Maximum performance (10-100x faster than interpreter)
+- Requires C++ backend
+- Compiles hot code paths to machine code
+- Supports x86-64 and ARM64 targets
+
+### Hybrid Mode
+
+Combines interpreter and JIT:
+- Uses interpreter for cold code
+- Compiles frequently executed code
+- Best balance of performance and compatibility
+- Automatic hotspot detection
+
+```rust
+use oc_ppu::{PpuInterpreter, JitMode};
+
+// Enable hybrid JIT mode
+let mut interpreter = PpuInterpreter::new(memory.clone());
+interpreter.set_jit_mode(JitMode::Hybrid);
+
+if interpreter.is_jit_available() {
+    println!("JIT compiler is available");
+}
+```
+
+## Thread Management
+
+### Creating Threads
+
+Threads can be created with full configuration:
+
+```rust
+use oc_ppu::{PpuThread, ThreadPriority, ThreadAffinity};
+
+let thread = PpuThread::new_with_config(
+    thread_id,
+    memory.clone(),
+    0x10000,              // Entry point
+    0xDEADBEEF,          // Argument (passed in r3)
+    ThreadPriority::HIGH,
+    0xD0000000,          // Stack address
+    0x10000,             // Stack size
+);
+```
+
+### Priority and Affinity
+
+The PS3 uses a priority range of 0-3071 (lower = higher priority):
+
+```rust
+// Priority levels
+ThreadPriority::HIGHEST  // 0 (most urgent)
+ThreadPriority::HIGH     // 256
+ThreadPriority::NORMAL   // 1024 (default)
+ThreadPriority::LOW      // 2048
+ThreadPriority::LOWEST   // 3071 (least urgent)
+
+// Set thread priority
+thread.set_scheduling_priority(ThreadPriority::HIGH);
+
+// Set core affinity (PS3 has 2 PPU hardware threads)
+thread.set_affinity(ThreadAffinity::PPU0);  // Run on core 0 only
+thread.set_affinity(ThreadAffinity::BOTH);  // Run on any core
+```
+
+### Thread Lifecycle
+
+```rust
+// Start thread
+thread.start();
+
+// Suspend and resume
+thread.suspend();
+thread.resume();
+
+// Put thread to sleep
+thread.sleep(1000);  // Sleep for 1000 microseconds
+
+// Exit with return value
+thread.exit(42);
+
+// Join and get return value
+if let Some(value) = thread.join() {
+    println!("Thread returned: {}", value);
+}
+```
+
+## Synchronization
+
+### Wait Reasons
+
+Threads can wait on various synchronization primitives:
+
+```rust
+use oc_ppu::WaitReason;
+
+// Wait on mutex
+thread.wait(WaitReason::Mutex(mutex_id), 1000);
+
+// Wait on condition variable
+thread.wait(WaitReason::Condition(cond_id), 0);  // No timeout
+
+// Wait on event flag
+thread.wait(WaitReason::EventFlag(flag_id), 5000);
+
+// Wake thread from waiting state
+thread.wake();
+```
+
+### Thread Statistics
+
+Each thread tracks synchronization statistics:
+
+```rust
+// Access sync state
+let preempt_count = thread.sync.preempt_count;
+let yield_count = thread.sync.yield_count;
+let total_wait_cycles = thread.sync.total_wait_cycles;
+```
+
+## Timing and Performance
+
+### Cycle-Accurate Timing
+
+The PPU can optionally track execution cycles:
+
+```rust
+let thread = PpuThread::new_with_timing(id, memory, true);
+
+// Add cycles for instruction execution
+thread.add_instruction_cycles(InstructionLatency::Load);
+
+// Get total cycles
+let cycles = thread.get_cycles();
+```
+
+### Instruction Latencies
+
+Different instruction types have realistic latencies:
+
+- **Simple ALU**: 1 cycle (add, sub, logic)
+- **Load**: 3 cycles
+- **Store**: 2 cycles
+- **Branch**: 1 cycle (predicted correctly)
+- **Branch Mispredict**: 23 cycles
+- **Float Simple**: 6 cycles (fadd, fsub, fmul)
+- **Float Divide**: 33 cycles
+- **Float Sqrt**: 44 cycles
+- **Vector**: 4 cycles (VMX operations)
+- **Integer Multiply**: 4 cycles
+- **Integer Divide**: 36 cycles
+
+### Pipeline Simulation
+
+The PPU models a simplified pipeline:
+
+```rust
+// Access pipeline state
+let branch_accuracy = thread.pipeline.branch_accuracy();
+let stall_cycles = thread.pipeline.stall_cycles;
+
+// Record branch prediction
+thread.pipeline.record_branch(true);  // Hit
+thread.pipeline.record_branch(false); // Miss
+
+// Flush pipeline (e.g., after misprediction)
+thread.pipeline.flush();
+```
+
+## Exception Handling
+
+The PPU implements the full PowerPC exception model:
+
+### Exception Types
+
+- **System Reset**: Processor reset
+- **Machine Check**: Hardware error
+- **Data Storage**: Memory access violation
+- **Instruction Storage**: Invalid instruction fetch
+- **External Interrupt**: Hardware interrupt
+- **Alignment**: Unaligned memory access
+- **Program**: Illegal instruction, privilege violation, trap
+- **Floating-Point Unavailable**: FPU disabled
+- **Decrementer**: Decrementer expired
+- **System Call**: sc instruction
+- **VMX Unavailable**: VMX disabled
+
+### Exception Handling
+
+```rust
+// Enter exception handler
+thread.enter_exception(
+    PpuExceptionType::SystemCall,
+    0x0000_0C00  // System call vector
+);
+
+// Return from exception (rfi instruction)
+thread.return_from_exception();
+
+// Check exception state
+if let Some(exc) = thread.exceptions.pending {
+    println!("Exception pending: {:?}", exc);
+}
+```
+
+## Register Operations
+
+### General Purpose Registers
+
+```rust
+// Read/write GPRs
+let value = thread.gpr(3);  // Read r3
+thread.set_gpr(3, 0x12345678);  // Write r3
+
+// Program counter
+let pc = thread.pc();
+thread.set_pc(0x10000);
+thread.advance_pc();  // Move to next instruction
+```
+
+### Condition Register
+
+```rust
+// CR has 8 fields (CR0-CR7), each 4 bits
+let cr0 = thread.get_cr_field(0);
+thread.set_cr_field(0, 0b1000);  // Set LT bit
+```
+
+### XER Register
+
+```rust
+// Carry, Overflow, and Summary Overflow bits
+let carry = thread.get_xer_ca();
+thread.set_xer_ca(true);
+
+let overflow = thread.get_xer_ov();
+thread.set_xer_ov(false);
+
+let summary_overflow = thread.get_xer_so();
+thread.set_xer_so(false);
+```
+
+### Floating-Point Registers
+
+```rust
+// Read/write FPRs
+let value = thread.fpr(0);
+thread.set_fpr(0, 3.14159);
+```
+
+### Vector Registers
+
+```rust
+// VMX/AltiVec registers (128-bit)
+let vec = thread.vr(0);  // [u32; 4]
+thread.set_vr(0, [1, 2, 3, 4]);
+```
+
+## Power Management
+
+The PPU supports power management states:
+
+```rust
+use oc_core::error::PowerState;
+
+// Transition to new power state
+thread.power.transition(PowerState::Running);
+thread.power.transition(PowerState::Idle);
+thread.power.transition(PowerState::Suspended);
+
+// Check if should execute
+if thread.power.should_execute() {
+    // Execute instruction
+}
+
+// Throttle execution
+thread.power.throttle_level = 50;  // 50% speed
+```
+
+## VMX/AltiVec SIMD
+
+The PPU fully supports VMX (AltiVec) SIMD instructions:
+
+- **Vector integer operations**: Add, subtract, multiply, shift, rotate
+- **Vector floating-point**: Single-precision operations
+- **Vector comparison**: Compare and select operations
+- **Vector permute**: Shuffle and merge operations
+- **Vector pack/unpack**: Data conversion
+
+```rust
+// VMX operations work on 128-bit vector registers
+// Each VR holds 4 x 32-bit words
+let vec_a = thread.vr(0);
+let vec_b = thread.vr(1);
+
+// Results are written back to vector registers
+thread.set_vr(2, result);
+```
+
+## Time Base Register
+
+The Time Base (TB) register provides high-resolution timing:
+
+```rust
+// Update time base (called each cycle)
+thread.update_time_base(cycles);
+
+// Read current time base
+let tb = thread.regs.tb;
+
+// TB runs at CPU frequency (3.2 GHz on Cell BE)
+```
+
+## Decrementer
+
+The decrementer provides periodic interrupts:
+
+```rust
+// Update decrementer
+if thread.update_decrementer(cycles) {
+    // Decrementer exception (crossed zero)
+    thread.enter_exception(
+        PpuExceptionType::Decrementer,
+        0x0000_0900
+    );
+}
+```
+
+## Performance Considerations
+
+### JIT Compilation
+
+<Info>
+JIT compilation can improve performance by 10-100x compared to interpretation. Enable hybrid mode for the best balance.
+</Info>
+
+### Cycle-Accurate Timing
+
+<Note>
+Cycle-accurate timing adds overhead. Disable it for maximum performance unless timing precision is required.
+</Note>
+
+### Memory Access
+
+The PPU uses the shared `MemoryManager`:
+
+```rust
+let memory = thread.memory();
+// Use memory manager for loads/stores
+```
+
+## Trap Instructions
+
+PowerPC trap instructions (tw, twi, td, tdi) are supported:
+
+```rust
+// Evaluate trap condition
+let should_trap = thread.evaluate_trap_condition(
+    to,  // Trap condition bits
+    a,   // First operand
+    b    // Second operand
+);
+
+if should_trap {
+    thread.enter_exception(
+        PpuExceptionType::Program { trap: true },
+        0x0000_0700
+    );
+}
+```
+
+## Implementation Details
+
+### Source Location
+
+PPU implementation: `crates/oc-ppu/src/`
+
+- `lib.rs` - Module exports and documentation
+- `thread.rs` - Thread state and lifecycle (oc-ppu/src/thread.rs:1)
+- `interpreter.rs` - Instruction interpreter (oc-ppu/src/interpreter.rs:1)
+- `decoder.rs` - Instruction decoder (oc-ppu/src/decoder.rs:1)
+- `vmx.rs` - VMX/AltiVec support (oc-ppu/src/vmx.rs:1)
+- `instructions/` - Per-instruction implementations
+
+### Dependencies
+
+```toml
+[dependencies]
+oc-core = { workspace = true }      # Core types
+oc-memory = { workspace = true }    # Memory management
+oc-hle = { workspace = true }       # HLE function calls
+oc-ffi = { workspace = true }       # JIT backend
+```
+
+## See Also
+
+- [SPU Component](spu) - Cell BE Synergistic Processing Units
+- [LV2 Kernel](lv2-kernel) - Thread management syscalls
+- [Memory Component](../architecture/memory) - Memory management

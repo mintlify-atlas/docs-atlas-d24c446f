@@ -1,0 +1,494 @@
+---
+title: Firmware setup
+description: Install PS3 system firmware to run commercial games and encrypted content
+---
+
+Most PS3 games are encrypted and require the official PS3 firmware to decrypt and run them. This guide explains how to download and install the firmware files needed by oxidized-cell.
+
+<Note>
+  The PS3 System Software is free and legal to download from Sony's official servers. oxidized-cell extracts cryptographic keys from the firmware for game decryption.
+</Note>
+
+## Why firmware is needed
+
+PS3 games come in two main formats:
+
+- **Encrypted (SELF/EBOOT.BIN)** - Commercial games from discs or PSN
+- **Unencrypted (ELF)** - Homebrew applications
+
+Encrypted games require firmware keys to:
+1. Decrypt game executables (SELF files)
+2. Verify game signatures
+3. Access system libraries and modules
+4. Load PRX (PlayStation Relocatable Executable) files
+
+<Warning>
+  Without firmware, you can only run unencrypted homebrew applications. Commercial games will fail to load.
+</Warning>
+
+## Downloading firmware
+
+You have two options for downloading the PS3 firmware: using the automated script or downloading manually.
+
+### Option 1: Automated download script (recommended)
+
+oxidized-cell includes scripts to automatically download the latest firmware from Sony's servers.
+
+<Tabs>
+  <Tab title="Linux/macOS">
+    <Steps>
+      <Step title="Navigate to the oxidized-cell directory">
+        ```bash
+        cd oxidized-cell
+        ```
+      </Step>
+
+      <Step title="Run the download script">
+        ```bash
+        ./scripts/download-firmware.sh
+        ```
+
+        The script will:
+        - Check if firmware already exists
+        - Download from Sony's official CDN
+        - Verify the download size (~200 MB)
+        - Place the file in `firmware/PS3UPDAT.PUP`
+      </Step>
+
+      <Step title="Wait for download to complete">
+        ```bash
+        ========================================
+          PS3 Firmware Downloader
+          For oxidized-cell PS3 Emulator
+        ========================================
+
+        Downloading PS3 System Software from Sony's servers...
+        URL: http://dus01.ps3.update.playstation.net/update/ps3/image/us/...
+
+        PS3UPDAT.PUP    100%[===================>] 207.38M  5.20MB/s    in 42s
+
+        ========================================
+          Firmware downloaded successfully!
+        ========================================
+
+        Location: firmware/PS3UPDAT.PUP
+        Size: 207.38 MB
+
+        The emulator will automatically use this firmware to decrypt games.
+        ```
+      </Step>
+    </Steps>
+
+    The script uses `wget` or `curl` (whichever is available) to download the firmware.
+  </Tab>
+
+  <Tab title="Windows">
+    <Steps>
+      <Step title="Navigate to the oxidized-cell directory">
+        ```powershell
+        cd oxidized-cell
+        ```
+      </Step>
+
+      <Step title="Run the download script">
+        ```powershell
+        .\scripts\download-firmware.bat
+        ```
+
+        The script will:
+        - Check if firmware already exists
+        - Use PowerShell (Windows 10+) or curl to download
+        - Place the file in `firmware\PS3UPDAT.PUP`
+      </Step>
+
+      <Step title="Wait for download to complete">
+        ```
+        ========================================
+          PS3 Firmware Downloader
+          For oxidized-cell PS3 Emulator
+        ========================================
+
+        Downloading PS3 System Software from Sony's servers...
+        URL: http://dus01.ps3.update.playstation.net/update/ps3/image/us/...
+
+        Using PowerShell to download...
+
+        ========================================
+          Firmware downloaded successfully!
+        ========================================
+
+        Location: firmware\PS3UPDAT.PUP
+
+        The emulator will automatically use this firmware to decrypt games.
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+### Option 2: Manual download
+
+If the automated script doesn't work or you prefer manual installation:
+
+<Steps>
+  <Step title="Create firmware directory">
+    <CodeGroup>
+    ```bash Linux/macOS
+    mkdir -p firmware
+    ```
+
+    ```powershell Windows
+    mkdir firmware
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Download firmware file">
+    Download the PS3 System Software update file:
+
+    <CodeGroup>
+    ```bash wget
+    wget http://dus01.ps3.update.playstation.net/update/ps3/image/us/2025_0305_c179ad173bbc08b55431d30947725a4b/PS3UPDAT.PUP -O firmware/PS3UPDAT.PUP
+    ```
+
+    ```bash curl
+    curl -L -o firmware/PS3UPDAT.PUP http://dus01.ps3.update.playstation.net/update/ps3/image/us/2025_0305_c179ad173bbc08b55431d30947725a4b/PS3UPDAT.PUP
+    ```
+
+    ```powershell PowerShell
+    Invoke-WebRequest -Uri "http://dus01.ps3.update.playstation.net/update/ps3/image/us/2025_0305_c179ad173bbc08b55431d30947725a4b/PS3UPDAT.PUP" -OutFile "firmware\PS3UPDAT.PUP"
+    ```
+    </CodeGroup>
+
+    Or visit the official PlayStation support page:
+    [https://www.playstation.com/en-us/support/hardware/ps3/system-software/](https://www.playstation.com/en-us/support/hardware/ps3/system-software/)
+  </Step>
+
+  <Step title="Verify the download">
+    Check that the file is approximately 200 MB:
+
+    <CodeGroup>
+    ```bash Linux/macOS
+    ls -lh firmware/PS3UPDAT.PUP
+    # Should show ~207M
+    ```
+
+    ```powershell Windows
+    Get-Item firmware\PS3UPDAT.PUP | Select-Object Name, Length
+    ```
+    </CodeGroup>
+
+    If the file is significantly smaller, the download may have failed.
+  </Step>
+</Steps>
+
+## Installing firmware
+
+Once downloaded, you need to install the firmware so oxidized-cell can extract the necessary keys.
+
+### Method 1: Automatic installation
+
+Place the firmware file in the `firmware/` directory. The emulator will automatically detect and install it on first run:
+
+<Steps>
+  <Step title="Place firmware file">
+    Ensure `PS3UPDAT.PUP` is in the firmware directory:
+
+    ```
+    oxidized-cell/
+    ├── firmware/
+    │   └── PS3UPDAT.PUP
+    ├── target/
+    └── Cargo.toml
+    ```
+  </Step>
+
+  <Step title="Launch the emulator">
+    ```bash
+    ./target/release/oxidized-cell
+    ```
+
+    On first run, the emulator will:
+    1. Detect the firmware file
+    2. Extract the PUP archive
+    3. Locate and extract decryption keys
+    4. Install system libraries and modules
+    5. Create the virtual flash filesystem (`dev_flash`)
+  </Step>
+
+  <Step title="Wait for extraction">
+    The installation process takes 1-2 minutes. You'll see log output:
+
+    ```
+    [INFO] Found firmware at: firmware/PS3UPDAT.PUP
+    [INFO] Extracting PUP archive...
+    [INFO] Extracting keys from CORE_OS_PACKAGE.pkg
+    [INFO] Installing system modules...
+    [INFO] Creating dev_flash filesystem...
+    [INFO] Firmware installation complete!
+    ```
+  </Step>
+</Steps>
+
+### Method 2: Command-line installation
+
+Install firmware explicitly using the `--install-firmware` flag:
+
+```bash
+oxidized-cell --install-firmware /path/to/PS3UPDAT.PUP
+```
+
+This is useful if:
+- The firmware is in a different location
+- You want to reinstall or update firmware
+- Automatic detection isn't working
+
+Example:
+
+```bash
+./target/release/oxidized-cell --install-firmware ~/Downloads/PS3UPDAT.PUP
+```
+
+Output:
+
+```
+[INFO] Installing firmware from: /home/user/Downloads/PS3UPDAT.PUP
+[INFO] Validating PUP file format...
+[INFO] Extracting archive contents...
+[INFO] Found 15 packages in update file
+[INFO] Extracting CORE_OS_PACKAGE.pkg (125 MB)...
+[INFO] Extracting keys from EBOOT.BIN...
+[INFO] Installing 234 system libraries to dev_flash...
+[INFO] Firmware v4.91 installed successfully!
+[INFO] Encrypted games can now be loaded.
+```
+
+### Method 3: UI installation
+
+<Note>
+  This feature is planned for a future release. Currently, use automatic or command-line installation.
+</Note>
+
+## Verifying firmware installation
+
+After installation, verify that firmware was installed correctly:
+
+<Steps>
+  <Step title="Check for dev_flash directory">
+    The emulator creates a virtual flash filesystem with the firmware files:
+
+    ```bash
+    ls -la dev_flash/
+    ```
+
+    You should see directories like:
+    - `dev_flash/sys/internal/` - System modules
+    - `dev_flash/vsh/` - Visual Shell files
+    - `dev_flash/data/` - System data
+  </Step>
+
+  <Step title="Check logs">
+    Run the emulator with verbose logging:
+
+    ```bash
+    RUST_LOG=debug ./target/release/oxidized-cell
+    ```
+
+    Look for firmware-related messages:
+
+    ```
+    [DEBUG] Loading firmware keys from dev_flash/sys/internal/
+    [DEBUG] Found 15 keys for SELF decryption
+    [DEBUG] Firmware version: 4.91
+    ```
+  </Step>
+
+  <Step title="Try loading an encrypted game">
+    Attempt to load a commercial game (EBOOT.BIN):
+
+    ```bash
+    ./target/release/oxidized-cell /path/to/game/EBOOT.BIN
+    ```
+
+    If firmware is installed correctly, you should see:
+
+    ```
+    [INFO] Loading SELF file: EBOOT.BIN
+    [INFO] Decrypting with firmware keys...
+    [INFO] Decryption successful
+    [INFO] Loading ELF sections...
+    ```
+
+    Without firmware, you'd see:
+
+    ```
+    [ERROR] Cannot decrypt SELF file: firmware not installed
+    [ERROR] Please install firmware with --install-firmware
+    ```
+  </Step>
+</Steps>
+
+## What gets installed
+
+The firmware installation extracts and installs:
+
+### Cryptographic keys
+
+- **SELF decryption keys** - Decrypt encrypted executables
+- **PKG decryption keys** - Decrypt package files
+- **EDAT keys** - Decrypt game data files
+- **Disc keys** - Decrypt game discs
+
+### System libraries
+
+Common system libraries installed to `dev_flash`:
+
+| Library | Purpose |
+|---------|----------|
+| `libgcm_sys.sprx` | RSX graphics system calls |
+| `libsysutil.sprx` | System utilities and dialogs |
+| `libspurs.sprx` | SPU runtime system |
+| `libfs.sprx` | File system operations |
+| `libio.sprx` | I/O operations |
+| `libnet.sprx` | Network functionality |
+| `libsysmodule.sprx` | Dynamic module loading |
+
+These libraries provide HLE (High-Level Emulation) for system calls.
+
+### System files
+
+- Font files (`.ttf`)
+- Localization data
+- System configuration files
+- Icon and image resources
+
+<Note>
+  oxidized-cell only extracts the minimal files needed for emulation. A full PS3 installation is not created.
+</Note>
+
+## Firmware location
+
+After installation, firmware data is stored in:
+
+```
+oxidized-cell/
+├── firmware/
+│   └── PS3UPDAT.PUP         # Original firmware file (can be deleted after install)
+├── dev_flash/                # Extracted system files
+│   ├── sys/
+│   │   └── internal/         # System modules and keys
+│   ├── vsh/
+│   └── data/
+└── keys/                     # Extracted cryptographic keys
+    ├── keys.json
+    └── *.bin
+```
+
+You can safely delete `PS3UPDAT.PUP` after installation to save space.
+
+## Updating firmware
+
+To update to a newer firmware version:
+
+<Steps>
+  <Step title="Download new firmware">
+    Download the latest `PS3UPDAT.PUP` from Sony's servers using the download script or manually.
+  </Step>
+
+  <Step title="Remove old installation">
+    ```bash
+    rm -rf dev_flash/ keys/
+    ```
+  </Step>
+
+  <Step title="Install new firmware">
+    ```bash
+    ./target/release/oxidized-cell --install-firmware firmware/PS3UPDAT.PUP
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Updating firmware may break save files or cause compatibility issues with older games. Backup your save data first.
+</Warning>
+
+## Troubleshooting
+
+### Firmware download fails
+
+**Issue**: Download script fails or times out
+
+**Solutions**:
+1. Check your internet connection
+2. Try the manual download method
+3. Use a different download tool (wget vs curl)
+4. Download from a browser and copy to `firmware/` directory
+
+### Invalid PUP file error
+
+**Issue**: `Error: Invalid PUP file format`
+
+**Solutions**:
+1. Re-download the firmware file (may be corrupted)
+2. Verify file size is ~200 MB
+3. Check file hash against known good values
+4. Ensure you downloaded the full file (not an HTML error page)
+
+### Installation hangs or crashes
+
+**Issue**: Firmware installation freezes or crashes
+
+**Solutions**:
+1. Check available disk space (need ~500 MB free)
+2. Run with debug logging: `RUST_LOG=debug`
+3. Try command-line installation instead of automatic
+4. Check permissions on firmware directory
+
+### Keys not found after installation
+
+**Issue**: `Error: SELF decryption keys not found`
+
+**Solutions**:
+1. Verify `dev_flash/sys/internal/` exists
+2. Check `keys/` directory for key files
+3. Reinstall firmware with `--install-firmware`
+4. Ensure firmware version is 3.55 or later
+
+### Games still won't decrypt
+
+**Issue**: Games fail to load even with firmware installed
+
+**Solutions**:
+1. Verify firmware installation with `RUST_LOG=debug`
+2. Check that EBOOT.BIN is a valid SELF file:
+   ```bash
+   file EBOOT.BIN
+   # Should show: data (encrypted)
+   ```
+3. Try a different game to rule out game-specific issues
+4. Check emulator logs for specific decryption errors
+
+## Legal notice
+
+<Warning>
+  The PS3 System Software is copyrighted by Sony Interactive Entertainment. You must own a PS3 console and legally obtain the firmware. oxidized-cell does not distribute firmware files.
+</Warning>
+
+The firmware is free to download from Sony's official website and CDN for legitimate purposes including:
+- Updating PS3 consoles
+- Emulation on owned software
+- Development and testing
+
+**Do not**:
+- Distribute firmware files
+- Use firmware to pirate games
+- Share extracted keys publicly
+
+## Next steps
+
+Now that firmware is installed:
+
+- [Load and run commercial games](/get-started/quickstart)
+- [Configure game directories](/configuration/paths)
+- [Set up controller mapping](/configuration/input)
+- [Optimize performance](/configuration/performance)

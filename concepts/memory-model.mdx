@@ -1,0 +1,587 @@
+---
+title: Memory model
+description: Virtual address space layout and memory management in oxidized-cell
+---
+
+# Memory model
+
+oxidized-cell emulates the PS3's 32-bit virtual address space with page-based memory management, reservation system for atomics, and separate address spaces for RSX graphics memory.
+
+## Virtual address space
+
+The PS3 uses a 32-bit virtual address space (4 GB total), divided into multiple regions:
+
+```
+0x00000000  ┌─────────────────────────────────┐
+            │   Main Memory (256 MB)          │  RWX
+            │   Kernel + Game Code/Data       │
+0x10000000  ├─────────────────────────────────┤
+            │   (Reserved)                    │
+0x20000000  ├─────────────────────────────────┤
+            │   User Memory (256 MB)          │  RWX
+            │   Dynamic Allocations           │
+0x30000000  ├─────────────────────────────────┤
+            │   RSX Mapped Memory (256 MB)    │  RW
+            │   GPU-Accessible Main Memory    │
+0x40000000  ├─────────────────────────────────┤
+            │   RSX I/O (1 MB)                │  RW MMIO
+            │   GPU Control Registers         │
+0x40100000  ├─────────────────────────────────┤
+            │   (Unmapped)                    │
+0xC0000000  ├─────────────────────────────────┤
+            │   RSX VRAM (256 MB)             │  RW
+            │   GPU Local Memory              │
+0xD0000000  ├─────────────────────────────────┤
+            │   Stack Area (256 MB)           │  RW
+            │   Thread Stacks                 │
+0xE0000000  ├─────────────────────────────────┤
+            │   SPU Local Storage             │  RW
+            │   6 x 256 KB (mapped)           │
+0xE0180000  ├─────────────────────────────────┤
+            │   (Unmapped)                    │
+0xFFFFFFFF  └─────────────────────────────────┘
+```
+
+### Memory regions
+
+From `oc-memory/src/constants.rs:1-54`:
+
+```rust
+/// Main memory base address
+pub const MAIN_MEM_BASE: u32 = 0x0000_0000;
+/// Main memory size (256 MB)
+pub const MAIN_MEM_SIZE: u32 = 0x1000_0000;
+
+/// User memory base address
+pub const USER_MEM_BASE: u32 = 0x2000_0000;
+/// User memory size (256 MB)
+pub const USER_MEM_SIZE: u32 = 0x1000_0000;
+
+/// RSX mapped memory base
+pub const RSX_MAP_BASE: u32 = 0x3000_0000;
+/// RSX mapped memory size
+pub const RSX_MAP_SIZE: u32 = 0x1000_0000;
+
+/// RSX I/O (control registers) base
+pub const RSX_IO_BASE: u32 = 0x4000_0000;
+/// RSX I/O size
+pub const RSX_IO_SIZE: u32 = 0x0010_0000;
+
+/// RSX local memory (VRAM) base
+pub const RSX_MEM_BASE: u32 = 0xC000_0000;
+/// RSX local memory size (256 MB)
+pub const RSX_MEM_SIZE: u32 = 0x1000_0000;
+
+/// Stack area base
+pub const STACK_BASE: u32 = 0xD000_0000;
+/// Stack area size
+pub const STACK_SIZE: u32 = 0x1000_0000;
+
+/// SPU local storage base
+pub const SPU_BASE: u32 = 0xE000_0000;
+/// SPU local storage size per SPU (256 KB)
+pub const SPU_LS_SIZE: u32 = 0x0004_0000;
+```
+
+<Note>
+  The address space layout matches the PS3 hardware for compatibility, but physical memory backing may be allocated on-demand.
+</Note>
+
+## Page-based memory management
+
+Memory is managed in pages for protection and allocation:
+
+```rust
+/// Standard page size (4 KB)
+pub const PAGE_SIZE: u32 = 0x1000;
+/// Large page size (1 MB)
+pub const LARGE_PAGE_SIZE: u32 = 0x10_0000;
+
+/// Total address space size (4 GB, 32-bit)
+pub const ADDRESS_SPACE_SIZE: usize = 0x1_0000_0000;
+
+/// Number of pages in the address space
+pub const NUM_PAGES: usize = ADDRESS_SPACE_SIZE / PAGE_SIZE as usize;
+// = 1,048,576 pages
+```
+
+### Page flags
+
+From `oc-memory/src/pages.rs`:
+
+```rust
+bitflags! {
+    pub struct PageFlags: u8 {
+        const READ    = 0b0001;
+        const WRITE   = 0b0010;
+        const EXECUTE = 0b0100;
+        const MMIO    = 0b1000;  // Memory-mapped I/O
+        
+        const RW  = Self::READ.bits() | Self::WRITE.bits();
+        const RX  = Self::READ.bits() | Self::EXECUTE.bits();
+        const RWX = Self::READ.bits() | Self::WRITE.bits() | Self::EXECUTE.bits();
+    }
+}
+```
+
+### Memory manager
+
+From `oc-memory/src/manager.rs:125-219`:
+
+```rust
+pub struct MemoryManager {
+    /// Base pointer for the main address space
+    base: *mut u8,
+    /// Allocation bitmap (one bit per page)
+    allocation_map: RwLock<Vec<u64>>,
+    /// Page flags for each page
+    page_flags: RwLock<Vec<PageFlags>>,
+    /// Reservation array (one per 128-byte cache line)
+    reservations: Box<[Reservation]>,
+    /// Memory regions
+    regions: Vec<MemoryRegion>,
+    /// RSX memory (separate allocation for VRAM)
+    rsx_mem: *mut u8,
+}
+```
+
+**Initialization**:
+
+1. Allocate 4 GB virtual address space using `mmap` (Unix) or `VirtualAlloc` (Windows)
+2. Allocate separate 256 MB for RSX VRAM
+3. Initialize page tracking arrays
+4. Commit main memory, user memory, and stack regions
+
+<Info>
+  Memory is allocated on-demand to reduce startup overhead and memory usage.
+</Info>
+
+## Memory operations
+
+### Read/write
+
+From `oc-memory/src/manager.rs:355-386`:
+
+```rust
+impl MemoryManager {
+    /// Read a value from memory
+    pub fn read<T: Copy>(&self, addr: u32) -> Result<T, MemoryError> {
+        self.check_access(addr, std::mem::size_of::<T>() as u32, PageFlags::READ)?;
+        Ok(unsafe { self.read_unchecked(addr) })
+    }
+    
+    /// Read without checking (for hot paths after validation)
+    #[inline(always)]
+    pub unsafe fn read_unchecked<T: Copy>(&self, addr: u32) -> T {
+        std::ptr::read_unaligned(self.ptr(addr) as *const T)
+    }
+    
+    /// Write a value to memory
+    pub fn write<T: Copy>(&self, addr: u32, value: T) -> Result<(), MemoryError> {
+        self.check_access(addr, std::mem::size_of::<T>() as u32, PageFlags::WRITE)?;
+        unsafe { self.write_unchecked(addr, value) };
+        Ok()
+    }
+}
+```
+
+### Big-endian operations
+
+<Note>
+  The PS3 is big-endian, so all multi-byte values must be byte-swapped on little-endian hosts (x86/x64).
+</Note>
+
+From `oc-memory/src/manager.rs:497-534`:
+
+```rust
+impl MemoryManager {
+    /// Read a big-endian u32
+    pub fn read_be32(&self, addr: u32) -> Result<u32, MemoryError> {
+        let value: u32 = self.read(addr)?;
+        Ok(u32::from_be(value))
+    }
+    
+    /// Write a big-endian u32
+    pub fn write_be32(&self, addr: u32, value: u32) -> Result<(), MemoryError> {
+        self.write(addr, value.to_be())
+    }
+}
+```
+
+### Allocation
+
+From `oc-memory/src/manager.rs:395-444`:
+
+```rust
+pub fn allocate(&self, size: u32, align: u32, flags: PageFlags) -> Result<u32, MemoryError> {
+    let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+    let num_pages = aligned_size / PAGE_SIZE;
+    
+    // Find contiguous free pages in user memory region
+    let start_page = (USER_MEM_BASE / PAGE_SIZE) as usize;
+    let end_page = ((USER_MEM_BASE + USER_MEM_SIZE) / PAGE_SIZE) as usize;
+    
+    // Search for num_pages consecutive free pages
+    // ...
+    
+    // Mark pages as allocated
+    for page in alloc_start_page..alloc_start_page + num_pages as usize {
+        allocation_map[page / 64] |= 1u64 << (page % 64);
+        page_flags[page] = flags;
+    }
+    
+    Ok((alloc_start_page as u32) * PAGE_SIZE)
+}
+```
+
+## Reservation system
+
+The PS3 uses load-reserved/store-conditional instructions for atomics. oxidized-cell implements this with a reservation system:
+
+```rust
+/// Reservation granularity for SPU atomics (128 bytes = cache line)
+pub const RESERVATION_GRANULARITY: u32 = 128;
+
+/// Number of reservations in the address space
+pub const NUM_RESERVATIONS: usize = ADDRESS_SPACE_SIZE / RESERVATION_GRANULARITY as usize;
+// = 33,554,432 reservations
+```
+
+### Reservation structure
+
+From `oc-memory/src/reservation.rs`:
+
+```rust
+pub struct Reservation {
+    /// Reservation timestamp (monotonic counter)
+    timestamp: AtomicU64,
+}
+
+impl Reservation {
+    /// Acquire a reservation
+    pub fn acquire(&self) -> u64 {
+        let current = self.timestamp.load(Ordering::Acquire);
+        current
+    }
+    
+    /// Try to lock with a given timestamp
+    pub fn try_lock(&self, timestamp: u64) -> bool {
+        self.timestamp.compare_exchange(
+            timestamp,
+            timestamp,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ).is_ok()
+    }
+    
+    /// Unlock and increment timestamp
+    pub fn unlock_and_increment(&self) {
+        self.timestamp.fetch_add(128, Ordering::Release);
+    }
+}
+```
+
+### Usage in PPU
+
+```rust
+// lwarx - Load Word And Reserve Indexed
+let addr = if ra == 0 { 0 } else { thread.gpr(ra) } + thread.gpr(rb);
+let reservation = self.memory.reservation(addr as u32);
+let timestamp = reservation.acquire();
+let value = self.memory.read_be32(addr as u32)?;
+thread.set_gpr(rt, value as u64);
+// Store timestamp for later stwcx.
+
+// stwcx. - Store Word Conditional Indexed
+let addr = if ra == 0 { 0 } else { thread.gpr(ra) } + thread.gpr(rb);
+let reservation = self.memory.reservation(addr as u32);
+if reservation.try_lock(stored_timestamp) {
+    // Reservation still valid - commit store
+    self.memory.write_be32(addr as u32, thread.gpr(rs) as u32)?;
+    reservation.unlock_and_increment();
+    thread.set_cr0_eq();  // Success
+} else {
+    // Reservation lost - store failed
+    thread.clear_cr0_eq();  // Failure
+}
+```
+
+<Info>
+  Reservations are 128-byte aligned to match cache line granularity, reducing false sharing.
+</Info>
+
+## RSX memory
+
+### RSX VRAM
+
+From `oc-memory/src/manager.rs:641-677`:
+
+RSX has dedicated 256 MB VRAM, separate from main memory:
+
+```rust
+impl MemoryManager {
+    /// Read from RSX local memory
+    pub fn read_rsx(&self, offset: u32, size: u32) -> Result<Vec<u8>, MemoryError> {
+        if offset.saturating_add(size) > RSX_MEM_SIZE {
+            return Err(MemoryError::InvalidAddress(RSX_MEM_BASE + offset));
+        }
+        
+        let mut data = vec![0u8; size as usize];
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.rsx_mem.add(offset as usize),
+                data.as_mut_ptr(),
+                size as usize,
+            );
+        }
+        Ok(data)
+    }
+}
+```
+
+### RSX memory mappings
+
+RSX can map main memory regions for GPU access:
+
+From `oc-memory/src/manager.rs:110-123`:
+
+```rust
+pub struct RsxMemoryMapping {
+    /// Offset in RSX local memory
+    pub rsx_offset: u32,
+    /// Main memory address
+    pub main_addr: u32,
+    /// Size of the mapping
+    pub size: u32,
+    /// Whether this is a tile mapping
+    pub tiled: bool,
+    /// Tile pitch (for tiled mappings)
+    pub tile_pitch: u32,
+}
+```
+
+**Creating a mapping**:
+
+```rust
+memory.map_rsx_memory(
+    rsx_offset: 0x1000,    // RSX VRAM offset
+    main_addr: 0x30000000, // Main memory address
+    size: 0x100000,        // 1 MB
+    tiled: false,
+    tile_pitch: 0,
+)?;
+```
+
+The RSX can now access `main_addr..main_addr+size` via `rsx_offset..rsx_offset+size`.
+
+## Shared memory regions
+
+PPU and SPU threads can share memory regions:
+
+From `oc-memory/src/manager.rs:59-108`:
+
+```rust
+pub struct SharedMemoryRegion {
+    pub id: u32,
+    /// Main memory base address
+    pub main_addr: u32,
+    /// Size in bytes
+    pub size: u32,
+    /// Flags
+    pub flags: PageFlags,
+    /// SPU IDs that have access
+    pub spu_access: Vec<u32>,
+    /// Whether PPU has access
+    pub ppu_access: bool,
+    /// Reference count
+    pub ref_count: u32,
+}
+```
+
+**Creating and sharing**:
+
+```rust
+// Create shared region in main memory
+let region_id = memory.create_shared_region(
+    addr: 0x20000000,
+    size: 0x10000,
+    flags: PageFlags::RW,
+)?;
+
+// Grant access to SPU 0
+memory.grant_spu_access(region_id, 0)?;
+
+// SPU 0 can now DMA to/from this region
+```
+
+## Memory access patterns
+
+### PPU access
+
+Direct memory access:
+```rust
+let value: u32 = memory.read_be32(0x1000)?;
+memory.write_be32(0x1000, 0x12345678)?;
+```
+
+### SPU access
+
+DMA transfers only:
+```rust
+// SPU issues DMA get
+spu.mfc.issue_get(
+    local_addr: 0x100,         // LS offset
+    effective_addr: 0x20001000, // Main memory
+    size: 0x4000,               // 16 KB
+    tag: 5,
+)?;
+
+// Wait for completion
+spu.mfc.wait_for_tag(5)?;
+
+// Access data in local storage
+let value = spu.ls_read_u32(0x100);
+```
+
+### RSX access
+
+MMIO registers:
+```rust
+// Write to RSX control register
+memory.write_be32(RSX_IO_BASE + 0x100, command)?;
+
+// Read RSX status
+let status = memory.read_be32(RSX_IO_BASE + 0x200)?;
+```
+
+## Memory protection and exceptions
+
+From `oc-memory/src/manager.rs:24-57`:
+
+```rust
+pub enum MemoryException {
+    /// Access violation (attempted access not permitted by page flags)
+    AccessViolation {
+        addr: u32,
+        kind: AccessKind,
+    },
+    /// Page fault (page not committed)
+    PageFault {
+        addr: u32,
+    },
+    /// Alignment fault
+    AlignmentFault {
+        addr: u32,
+        required: u32,
+        actual: u32,
+    },
+    /// Reserved address access
+    ReservedAccess {
+        addr: u32,
+    },
+}
+
+pub enum ExceptionHandlerResult {
+    /// Exception was handled, continue execution
+    Handled,
+    /// Exception not handled, should be reported as error
+    NotHandled,
+    /// Retry the memory access
+    Retry,
+}
+```
+
+**Custom exception handler**:
+
+```rust
+memory.set_exception_handler(|exception| {
+    match exception {
+        MemoryException::PageFault { addr } => {
+            // Commit page on-demand
+            commit_page(addr);
+            ExceptionHandlerResult::Retry
+        }
+        _ => ExceptionHandlerResult::NotHandled
+    }
+});
+```
+
+## Performance optimization
+
+### JIT fast paths
+
+From `oc-memory/src/manager.rs:291-308`:
+
+JIT-compiled code uses the base pointer directly:
+
+```rust
+/// Get the base pointer for the address space
+pub fn base_ptr(&self) -> *mut u8 {
+    self.base
+}
+
+/// Get raw pointer for address (unchecked, for hot paths)
+#[inline(always)]
+pub unsafe fn ptr(&self, addr: u32) -> *mut u8 {
+    self.base.add(addr as usize)
+}
+```
+
+JIT code:
+```cpp
+// Generated JIT code for load word (lwz)
+uint32_t* ptr = (uint32_t*)(memory_base + ea);
+uint32_t value = __builtin_bswap32(*ptr);  // Big-endian load
+set_gpr(rt, value);
+```
+
+<Note>
+  Unchecked access is only safe in JIT code that has already validated memory bounds and permissions.
+</Note>
+
+### Memory profiling
+
+From `oc-memory/src/debug.rs`:
+
+```rust
+pub struct MemoryProfiler {
+    /// Read count per page
+    read_counts: Vec<AtomicU64>,
+    /// Write count per page
+    write_counts: Vec<AtomicU64>,
+    /// Hot pages (frequently accessed)
+    hot_pages: RwLock<HashSet<usize>>,
+}
+```
+
+Enabling profiling:
+```rust
+let config = Config {
+    cpu: CpuConfig {
+        memory_profiling: true,
+        ..Default::default()
+    },
+    ..Default::default()
+};
+```
+
+## Implementation details
+
+Key source files:
+- **Constants**: `crates/oc-memory/src/constants.rs`
+- **Manager**: `crates/oc-memory/src/manager.rs:125-751`
+- **Pages**: `crates/oc-memory/src/pages.rs`
+- **Reservations**: `crates/oc-memory/src/reservation.rs`
+- **Profiling**: `crates/oc-memory/src/debug.rs`
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Cell BE architecture" icon="cpu" href="/concepts/cell-be">
+    Learn about PPU and SPU processors
+  </Card>
+  
+  <Card title="Execution modes" icon="bolt" href="/concepts/execution-modes">
+    Interpreter vs JIT compilation
+  </Card>
+</CardGroup>

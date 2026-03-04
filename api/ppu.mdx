@@ -1,0 +1,427 @@
+---
+title: "oc_ppu"
+description: "PowerPC Processing Unit emulation"
+---
+
+The `oc_ppu` crate implements the Cell BE PPU, based on the PowerPC 970 architecture with VMX/AltiVec SIMD support.
+
+## Overview
+
+The PPU operates in three modes:
+
+- **Interpreter** - Pure software interpretation (default, always available)
+- **JIT** - Just-In-Time compilation for maximum performance (requires C++ backend)
+- **Hybrid** - Uses JIT for hot paths, interpreter for cold code (best balance)
+
+## PpuInterpreter
+
+The main PPU instruction interpreter with JIT support.
+
+### Creation
+
+<ParamField path="new" type="fn(memory: Arc<MemoryManager>) -> Self">
+  Creates a new PPU interpreter with the given memory manager.
+  
+  ```rust
+  use oc_ppu::PpuInterpreter;
+  use std::sync::Arc;
+  
+  let memory = MemoryManager::new()?;
+  let interpreter = PpuInterpreter::new(memory);
+  ```
+</ParamField>
+
+### JIT control
+
+<ParamField path="set_jit_mode" type="fn(&self, mode: JitMode)">
+  Sets the JIT execution mode.
+  
+  ```rust
+  use oc_ppu::JitMode;
+  
+  interpreter.set_jit_mode(JitMode::Hybrid);
+  ```
+</ParamField>
+
+<ParamField path="enable_jit" type="fn(&self)">
+  Enables JIT compilation (shorthand for `set_jit_mode(JitMode::Hybrid)`).
+  
+  ```rust
+  interpreter.enable_jit();
+  ```
+</ParamField>
+
+<ParamField path="disable_jit" type="fn(&self)">
+  Disables JIT compilation, using pure interpreter mode.
+</ParamField>
+
+<ParamField path="is_jit_available" type="fn(&self) -> bool">
+  Checks if the JIT compiler is available (C++ backend compiled).
+  
+  ```rust
+  if interpreter.is_jit_available() {
+      println!("JIT compiler is available");
+      interpreter.enable_jit();
+  }
+  ```
+</ParamField>
+
+<ParamField path="jit_mode" type="fn(&self) -> JitMode">
+  Returns the current JIT execution mode.
+</ParamField>
+
+### Execution
+
+<ParamField path="step" type="fn(&self, thread: &mut PpuThread) -> Result<(), PpuError>">
+  Executes a single instruction on the given thread.
+  
+  ```rust
+  loop {
+      match interpreter.step(&mut thread) {
+          Ok(()) => continue,
+          Err(PpuError::ThreadExit { exit_code }) => {
+              println!("Thread exited with code {}", exit_code);
+              break;
+          }
+          Err(e) => return Err(e),
+      }
+  }
+  ```
+</ParamField>
+
+<ParamField path="instruction_count" type="fn(&self) -> u64">
+  Returns the total number of instructions executed.
+</ParamField>
+
+<ParamField path="reset_instruction_count" type="fn(&self)">
+  Resets the instruction counter to zero.
+</ParamField>
+
+### JIT statistics
+
+<ParamField path="jit_stats" type="fn(&self) -> JitStats">
+  Returns JIT performance statistics.
+  
+  ```rust
+  let stats = interpreter.jit_stats();
+  println!("Blocks compiled: {}", stats.blocks_compiled);
+  println!("JIT executions: {}", stats.jit_executions);
+  ```
+</ParamField>
+
+<ParamField path="reset_jit_stats" type="fn(&self)">
+  Resets JIT statistics counters.
+</ParamField>
+
+<ResponseField name="JitStats" type="struct">
+  JIT performance statistics
+  
+  ```rust
+  pub struct JitStats {
+      pub blocks_compiled: u64,
+      pub jit_executions: u64,
+      pub interpreter_fallbacks: u64,
+      pub jit_instructions: u64,
+      pub cache_hits: u64,
+      pub cache_misses: u64,
+  }
+  ```
+</ResponseField>
+
+### Breakpoints
+
+<ParamField path="add_breakpoint" type="fn(&self, addr: u64, bp_type: BreakpointType)">
+  Adds a breakpoint at the specified address.
+  
+  ```rust
+  use oc_ppu::BreakpointType;
+  
+  // Unconditional breakpoint
+  interpreter.add_breakpoint(0x10000, BreakpointType::Unconditional);
+  
+  // Conditional breakpoint
+  let condition = BreakpointCondition::GprEquals { reg: 3, value: 0 };
+  interpreter.add_breakpoint(0x20000, BreakpointType::Conditional(condition));
+  ```
+</ParamField>
+
+<ParamField path="remove_breakpoint" type="fn(&self, addr: u64)">
+  Removes a breakpoint at the specified address.
+</ParamField>
+
+<ParamField path="enable_breakpoint" type="fn(&self, addr: u64)">
+  Enables a previously disabled breakpoint.
+</ParamField>
+
+<ParamField path="disable_breakpoint" type="fn(&self, addr: u64)">
+  Temporarily disables a breakpoint without removing it.
+</ParamField>
+
+<ParamField path="clear_breakpoints" type="fn(&self)">
+  Removes all breakpoints.
+</ParamField>
+
+<ParamField path="get_breakpoints" type="fn(&self) -> Vec<Breakpoint>">
+  Returns a list of all registered breakpoints.
+</ParamField>
+
+## PpuThread
+
+Represents a PPU thread with its register state and execution context.
+
+### Creation
+
+<ParamField path="new" type="fn(id: u32, memory: Arc<MemoryManager>) -> Self">
+  Creates a new PPU thread.
+  
+  ```rust
+  use oc_ppu::PpuThread;
+  
+  let thread = PpuThread::new(0, memory);
+  ```
+</ParamField>
+
+<ParamField path="new_with_config" type="fn(id: u32, memory: Arc<MemoryManager>, entry_point: u64, arg: u64, priority: ThreadPriority, stack_addr: u32, stack_size: u32) -> Self">
+  Creates a thread with full configuration.
+  
+  ```rust
+  use oc_ppu::{PpuThread, ThreadPriority};
+  
+  let thread = PpuThread::new_with_config(
+      1,                    // Thread ID
+      memory,
+      0x10000,              // Entry point
+      0xDEAD,               // Argument (in r3)
+      ThreadPriority::HIGH,
+      0xD0000000,           // Stack address
+      0x10000,              // Stack size (64KB)
+  );
+  ```
+</ParamField>
+
+### Register access
+
+<ParamField path="gpr" type="fn(&self, index: usize) -> u64">
+  Reads a General Purpose Register (GPR).
+  
+  ```rust
+  let r3 = thread.gpr(3);  // Function return value
+  ```
+</ParamField>
+
+<ParamField path="set_gpr" type="fn(&mut self, index: usize, value: u64)">
+  Writes a GPR.
+  
+  ```rust
+  thread.set_gpr(3, 42);  // Set return value
+  ```
+</ParamField>
+
+<ParamField path="fpr" type="fn(&self, index: usize) -> f64">
+  Reads a Floating Point Register (FPR).
+</ParamField>
+
+<ParamField path="set_fpr" type="fn(&mut self, index: usize, value: f64)">
+  Writes an FPR.
+</ParamField>
+
+<ParamField path="vr" type="fn(&self, index: usize) -> [u32; 4]">
+  Reads a Vector Register (VMX/AltiVec).
+</ParamField>
+
+<ParamField path="set_vr" type="fn(&mut self, index: usize, value: [u32; 4])">
+  Writes a vector register.
+</ParamField>
+
+### Program counter
+
+<ParamField path="pc" type="fn(&self) -> u64">
+  Returns the current program counter.
+</ParamField>
+
+<ParamField path="set_pc" type="fn(&mut self, addr: u64)">
+  Sets the program counter.
+</ParamField>
+
+<ParamField path="advance_pc" type="fn(&mut self)">
+  Advances the program counter by 4 bytes (one instruction).
+</ParamField>
+
+### Condition register
+
+<ParamField path="get_cr_field" type="fn(&self, field: usize) -> u32">
+  Gets a CR field value (0-7).
+  
+  ```rust
+  let cr0 = thread.get_cr_field(0);
+  ```
+</ParamField>
+
+<ParamField path="set_cr_field" type="fn(&mut self, field: usize, value: u32)">
+  Sets a CR field value.
+</ParamField>
+
+### XER register
+
+<ParamField path="get_xer_ca" type="fn(&self) -> bool">
+  Gets the XER carry bit.
+</ParamField>
+
+<ParamField path="set_xer_ca" type="fn(&mut self, value: bool)">
+  Sets the XER carry bit.
+</ParamField>
+
+<ParamField path="get_xer_ov" type="fn(&self) -> bool">
+  Gets the XER overflow bit.
+</ParamField>
+
+<ParamField path="set_xer_ov" type="fn(&mut self, value: bool)">
+  Sets the XER overflow bit.
+</ParamField>
+
+<ParamField path="get_xer_so" type="fn(&self) -> bool">
+  Gets the XER summary overflow bit.
+</ParamField>
+
+### Thread state
+
+<ParamField path="start" type="fn(&mut self)">
+  Starts the thread.
+</ParamField>
+
+<ParamField path="stop" type="fn(&mut self)">
+  Stops the thread.
+</ParamField>
+
+<ParamField path="is_running" type="fn(&self) -> bool">
+  Checks if the thread is running.
+</ParamField>
+
+### Thread priority and affinity
+
+<ParamField path="set_scheduling_priority" type="fn(&mut self, priority: ThreadPriority)">
+  Sets the thread's scheduling priority.
+  
+  ```rust
+  use oc_ppu::ThreadPriority;
+  
+  thread.set_scheduling_priority(ThreadPriority::HIGH);
+  ```
+</ParamField>
+
+<ParamField path="get_scheduling_priority" type="fn(&self) -> ThreadPriority">
+  Gets the thread's scheduling priority.
+</ParamField>
+
+<ParamField path="set_affinity" type="fn(&mut self, affinity: ThreadAffinity)">
+  Sets which PPU cores this thread can run on.
+  
+  ```rust
+  use oc_ppu::ThreadAffinity;
+  
+  thread.set_affinity(ThreadAffinity::PPU0);  // Pin to core 0
+  ```
+</ParamField>
+
+<ParamField path="can_run_on_core" type="fn(&self, core_id: u32) -> bool">
+  Checks if the thread can run on a specific core.
+</ParamField>
+
+### Synchronization
+
+<ParamField path="wait" type="fn(&mut self, reason: WaitReason, timeout_us: u64)">
+  Puts the thread in waiting state.
+  
+  ```rust
+  use oc_ppu::WaitReason;
+  
+  thread.wait(WaitReason::Mutex(42), 1000000);  // Wait 1 second
+  ```
+</ParamField>
+
+<ParamField path="wake" type="fn(&mut self)">
+  Wakes the thread from waiting state.
+</ParamField>
+
+<ParamField path="sleep" type="fn(&mut self, timeout_us: u64)">
+  Puts the thread to sleep for the specified duration.
+</ParamField>
+
+<ParamField path="yield_thread" type="fn(&mut self)">
+  Voluntarily yields execution to other threads.
+</ParamField>
+
+## Types
+
+### JitMode
+
+<ResponseField name="JitMode" type="enum">
+  JIT execution mode
+  
+  - `Interpreter` - Pure interpreter mode, no JIT compilation
+  - `Jit` - Pure JIT mode, all code is compiled before execution
+  - `Hybrid` - JIT for hot paths, interpreter for cold code (recommended)
+</ResponseField>
+
+### ThreadPriority
+
+<ResponseField name="ThreadPriority" type="struct">
+  Thread scheduling priority (0-3071, lower is higher priority)
+  
+  ```rust
+  pub struct ThreadPriority(pub u32);
+  
+  impl ThreadPriority {
+      pub const HIGHEST: Self = Self(0);
+      pub const HIGH: Self = Self(256);
+      pub const NORMAL: Self = Self(1024);
+      pub const LOW: Self = Self(2048);
+      pub const LOWEST: Self = Self(3071);
+  }
+  ```
+</ResponseField>
+
+### ThreadAffinity
+
+<ResponseField name="ThreadAffinity" type="struct">
+  Thread affinity mask (which PPU cores can run this thread)
+  
+  ```rust
+  pub struct ThreadAffinity(pub u64);
+  
+  impl ThreadAffinity {
+      pub const ANY: Self = Self(0xFFFFFFFF_FFFFFFFF);
+      pub const PPU0: Self = Self(0x01);
+      pub const PPU1: Self = Self(0x02);
+      pub const BOTH: Self = Self(0x03);
+  }
+  ```
+</ResponseField>
+
+### PpuThreadState
+
+<ResponseField name="PpuThreadState" type="enum">
+  Thread execution state
+  
+  - `Stopped` - Thread is stopped
+  - `Running` - Thread is actively executing
+  - `Waiting` - Thread is blocked waiting for an event
+  - `Suspended` - Thread is suspended
+  - `Ready` - Thread is ready to run
+  - `Sleeping` - Thread is sleeping (timed wait)
+</ResponseField>
+
+### WaitReason
+
+<ResponseField name="WaitReason" type="enum">
+  Reason for thread waiting
+  
+  - `Mutex(u32)` - Waiting on mutex
+  - `Condition(u32)` - Waiting on condition variable
+  - `Semaphore(u32)` - Waiting on semaphore
+  - `EventFlag(u32)` - Waiting on event flag
+  - `LwMutex(u32)` - Waiting on lightweight mutex
+  - `Queue(u32)` - Waiting on message queue
+  - `SpuThread(u32)` - Waiting for SPU thread
+  - `Sleep(u64)` - Sleeping for duration (microseconds)
+</ResponseField>

@@ -1,0 +1,709 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for oxidized-cell PS3 emulator
+---
+
+This guide covers common issues you may encounter while using the oxidized-cell emulator and their solutions.
+
+## Installation issues
+
+<Accordion title="Build fails with 'LLVM not found'">
+
+**Problem**: LLVM development libraries are not installed or not in PATH.
+
+**Solution**:
+
+**Linux (Ubuntu/Debian)**:
+```bash
+sudo apt install llvm-dev libllvm14-dev
+```
+
+**Linux (Fedora)**:
+```bash
+sudo dnf install llvm-devel
+```
+
+**macOS**:
+```bash
+brew install llvm
+export LLVM_SYS_140_PREFIX="$(brew --prefix llvm)"
+```
+
+**Windows**:
+- Download LLVM from https://releases.llvm.org/
+- Install and add to PATH
+- Set `LLVM_SYS_140_PREFIX` environment variable
+
+</Accordion>
+
+<Accordion title="Build fails with 'Vulkan SDK not found'">
+
+**Problem**: Vulkan SDK is not installed.
+
+**Solution**:
+
+**Linux (Ubuntu/Debian)**:
+```bash
+sudo apt install libvulkan-dev vulkan-tools
+```
+
+**macOS**:
+```bash
+brew install vulkan-headers vulkan-loader
+```
+
+**Windows**:
+- Download from https://vulkan.lunarg.com/
+- Install the Vulkan SDK
+- Restart your terminal/IDE
+
+**Verify installation**:
+```bash
+vulkaninfo
+```
+
+</Accordion>
+
+<Accordion title="Build fails with 'alsa-sys' errors (Linux)">
+
+**Problem**: ALSA development libraries missing.
+
+**Solution**:
+```bash
+# Ubuntu/Debian
+sudo apt install libasound2-dev
+
+# Fedora
+sudo dnf install alsa-lib-devel
+
+# Arch
+sudo pacman -S alsa-lib
+```
+
+</Accordion>
+
+## Game loading issues
+
+<Accordion title="Error: Invalid ELF magic">
+
+**Problem**: The file is not a valid PS3 executable.
+
+**Symptoms**:
+```
+[ERROR] Loader error: Invalid ELF: Invalid ELF magic bytes: XX XX XX XX
+```
+
+**Solutions**:
+
+1. **Verify file integrity**:
+   ```bash
+   # Check first bytes (should be 7F 45 4C 46 or 53 43 45 00)
+   xxd -l 16 EBOOT.BIN
+   ```
+
+2. **Ensure correct file**:
+   - Load `EBOOT.BIN` from `PS3_GAME/USRDIR/`
+   - Not the update file from `PS3_UPDATE/`
+   - Not a compressed or archived file
+
+3. **Check file size**:
+   ```bash
+   ls -lh EBOOT.BIN
+   ```
+   - Should be at least 64 bytes
+   - Typical size: 100KB - 10MB+
+
+4. **Re-dump the game**:
+   - File may be corrupted during copy
+   - Try extracting from disc again
+
+</Accordion>
+
+<Accordion title="Error: Decryption failed">
+
+**Problem**: Cannot decrypt SELF file (commercial games).
+
+**Symptoms**:
+```
+[ERROR] Loader error: Decryption failed: Missing decryption keys
+[ERROR] SELF file requires firmware keys
+```
+
+**Solutions**:
+
+<Steps>
+  <Step title="Install PS3 firmware">
+    Download and install the official firmware:
+    ```bash
+    # Download firmware
+    ./scripts/download-firmware.sh
+    
+    # Install
+    cargo run --release -- --install-firmware firmware/PS3UPDAT.PUP
+    ```
+  </Step>
+  
+  <Step title="Verify firmware installation">
+    Check that `dev_flash/` directory exists and contains files:
+    ```bash
+    ls -la dev_flash/
+    ```
+    Should contain:
+    - `sys/external/` - System modules
+    - `vsh/module/` - VSH modules
+    - Various `.sprx` files
+  </Step>
+  
+  <Step title="Check firmware path configuration">
+    Verify in `config.toml`:
+    ```toml
+    [paths]
+    dev_flash = "/path/to/oxidized-cell/dev_flash"
+    firmware = "/path/to/oxidized-cell/firmware"
+    ```
+  </Step>
+  
+  <Step title="Try re-installing firmware">
+    If issues persist:
+    ```bash
+    # Remove old firmware
+    rm -rf dev_flash/
+    
+    # Re-install
+    cargo run --release -- --install-firmware firmware/PS3UPDAT.PUP
+    ```
+  </Step>
+</Steps>
+
+</Accordion>
+
+<Accordion title="Error: File too small / truncated file">
+
+**Problem**: Game file is corrupted or incomplete.
+
+**Symptoms**:
+```
+[ERROR] Invalid ELF: File too small: X bytes (minimum 64 bytes required)
+[ERROR] Segment extends beyond file
+```
+
+**Solutions**:
+
+1. **Verify file integrity**:
+   ```bash
+   # Check file size
+   ls -lh EBOOT.BIN
+   
+   # Compare with a known good dump
+   md5sum EBOOT.BIN
+   ```
+
+2. **Re-copy the file**:
+   - Copy may have failed
+   - Try copying again
+   - Use a checksum tool to verify
+
+3. **Check disk space**:
+   ```bash
+   df -h
+   ```
+   - Ensure target disk isn't full
+
+4. **Extract from disc again**:
+   - Original extraction may have failed
+   - Use different extraction tool
+
+</Accordion>
+
+<Accordion title="Error: Unresolved imports">
+
+**Problem**: Game requires modules not yet implemented.
+
+**Symptoms**:
+```
+[WARN] Unresolved import: cellSpurs:0x12345678
+[WARN] Created HLE stub for 15 unresolved functions
+```
+
+**Impact**:
+- Game may run but with missing features
+- Game may crash when calling unimplemented functions
+- Some functionality won't work
+
+**Solutions**:
+
+1. **Try running anyway**:
+   - Many games work with some unimplemented functions
+   - The emulator creates stubs that return success
+
+2. **Check compatibility**:
+   - See if the game is known to work
+   - Check GitHub issues for similar reports
+
+3. **Enable debug logging**:
+   ```toml
+   [debug]
+   log_level = "Debug"
+   ```
+   - Track which functions are called
+   - Report missing functions on GitHub
+
+4. **Wait for implementation**:
+   - HLE modules are actively being developed
+   - Check the [development status](/development)
+
+</Accordion>
+
+## Runtime issues
+
+<Accordion title="Game crashes immediately after loading">
+
+**Problem**: Crash during game initialization.
+
+**Symptoms**:
+```
+[INFO] Game loaded successfully
+[INFO] Starting PPU thread
+[ERROR] PPU error: Invalid instruction at 0x10000000
+```
+
+**Solutions**:
+
+1. **Switch to Interpreter mode**:
+   ```toml
+   [cpu]
+   ppu_decoder = "Interpreter"
+   spu_decoder = "Interpreter"
+   ```
+   - More compatible than Recompiler
+   - Slower but more stable
+
+2. **Enable accurate options**:
+   ```toml
+   [cpu]
+   accurate_dfma = true
+   accurate_rsx_reservation = true
+   ```
+
+3. **Check for null pointer dereference**:
+   ```
+   [ERROR] Memory error: Invalid address: 0x00000000
+   ```
+   - Game trying to access null pointer
+   - May indicate initialization failure
+
+4. **Enable debug logging**:
+   ```toml
+   [debug]
+   log_level = "Debug"
+   trace_ppu = true
+   ```
+   - Identify the exact crash location
+   - See last instruction before crash
+
+5. **Try different firmware version**:
+   - Some games require specific firmware
+   - Try firmware 4.88 or 4.89
+
+</Accordion>
+
+<Accordion title="Black screen / no graphics">
+
+**Problem**: Game loads but no graphics appear.
+
+**Solutions**:
+
+1. **Verify Vulkan is working**:
+   ```bash
+   vulkaninfo | head -20
+   ```
+   - Should show your GPU
+   - Should list supported features
+
+2. **Update GPU drivers**:
+   - **NVIDIA**: Download from nvidia.com
+   - **AMD**: Download from amd.com  
+   - **Intel**: Update through system updates
+
+3. **Enable write buffers**:
+   ```toml
+   [gpu]
+   write_color_buffers = true
+   write_depth_buffer = true
+   ```
+
+4. **Check RSX initialization**:
+   ```bash
+   cargo run --release -- game.elf 2>&1 | grep RSX
+   ```
+   Look for:
+   ```
+   [INFO] RSX: Vulkan backend initialized
+   [INFO] RSX: GPU: NVIDIA GeForce RTX 3080
+   ```
+
+5. **Disable shader cache**:
+   ```toml
+   [gpu]
+   shader_cache = false
+   ```
+   - Corrupted shader cache can cause issues
+   - Clear cache: `rm -rf cache/shaders/`
+
+6. **Enable RSX tracing**:
+   ```toml
+   [debug]
+   trace_rsx = true
+   dump_shaders = true
+   ```
+   - Check if draw commands are being issued
+   - Inspect shader compilation errors
+
+</Accordion>
+
+<Accordion title="Poor performance / low FPS">
+
+**Problem**: Game runs slower than expected.
+
+**Solutions**:
+
+<Steps>
+  <Step title="Use Recompiler mode">
+    ```toml
+    [cpu]
+    ppu_decoder = "Recompiler"
+    spu_decoder = "Recompiler"
+    ```
+    Provides 20x-50x performance improvement over Interpreter.
+  </Step>
+  
+  <Step title="Disable accuracy options">
+    ```toml
+    [cpu]
+    accurate_dfma = false
+    accurate_rsx_reservation = false
+    cycle_accurate_timing = false
+    pipeline_simulation = false
+    cache_simulation = false
+    ```
+    Only enable these if required for compatibility.
+  </Step>
+  
+  <Step title="Enable SPU loop detection">
+    ```toml
+    [cpu]
+    spu_loop_detection = true
+    ```
+    Significantly improves SPU performance.
+  </Step>
+  
+  <Step title="Reduce resolution">
+    ```toml
+    [gpu]
+    resolution_scale = 100  # Native resolution
+    ```
+    Lower resolutions (100 = 720p) perform better.
+  </Step>
+  
+  <Step title="Disable VSync">
+    ```toml
+    [gpu]
+    vsync = false
+    frame_limit = 0
+    ```
+    Test raw performance without synchronization.
+  </Step>
+  
+  <Step title="Enable shader cache">
+    ```toml
+    [gpu]
+    shader_cache = true
+    ```
+    Reduces shader compilation stuttering.
+  </Step>
+</Steps>
+
+**Performance expectations**:
+- **Homebrew**: Should run at full speed
+- **Simple games**: 30-60 FPS
+- **Complex games**: May not reach full speed
+- **AAA games**: Limited compatibility, performance varies
+
+</Accordion>
+
+<Accordion title="Audio crackling or distortion">
+
+**Problem**: Audio plays with glitches or stuttering.
+
+**Solutions**:
+
+1. **Increase audio buffer**:
+   ```toml
+   [audio]
+   buffer_duration_ms = 150  # Or 200
+   ```
+   - Higher value = more latency but fewer dropouts
+   - Try 100, 150, or 200
+
+2. **Enable time stretching**:
+   ```toml
+   [audio]
+   time_stretching = true
+   ```
+   - Adjusts audio speed to match emulation
+
+3. **Disable time stretching**:
+   ```toml
+   [audio]
+   time_stretching = false
+   ```
+   - Some games work better without it
+
+4. **Check system audio settings**:
+   - Ensure sample rate is 48kHz
+   - Disable audio enhancements
+   - Try different audio devices
+
+5. **Temporary disable for testing**:
+   ```toml
+   [audio]
+   enable = false
+   ```
+   - Check if audio is causing performance issues
+
+</Accordion>
+
+<Accordion title="Emulator crashes on startup">
+
+**Problem**: Emulator won't start at all.
+
+**Solutions**:
+
+1. **Check Vulkan installation**:
+   ```bash
+   vulkaninfo
+   ```
+   - If command fails, install Vulkan SDK
+
+2. **Delete configuration**:
+   ```bash
+   # Linux/macOS
+   rm ~/.config/oxidized-cell/config.toml
+   
+   # Windows  
+   del %APPDATA%\oxidized-cell\config.toml
+   ```
+   - Config may be corrupted
+   - Will regenerate with defaults
+
+3. **Run with debug output**:
+   ```bash
+   RUST_BACKTRACE=1 cargo run --release 2>&1 | tee crash.log
+   ```
+   - Captures full error details
+
+4. **Check for missing libraries**:
+   ```bash
+   # Linux
+   ldd target/release/oxidized-cell
+   ```
+   - Verify all dependencies are present
+
+5. **Update Rust toolchain**:
+   ```bash
+   rustup update stable
+   cargo clean
+   cargo build --release
+   ```
+
+</Accordion>
+
+## Input issues
+
+<Accordion title="Keyboard input not working">
+
+**Problem**: Game doesn't respond to keyboard input.
+
+**Solutions**:
+
+1. **Check input configuration**:
+   ```toml
+   [input.keyboard_mapping]
+   cross = "X"
+   circle = "C"
+   # ... etc
+   ```
+
+2. **Verify window focus**:
+   - Click on the emulator window
+   - Emulator must have focus to receive input
+
+3. **Test in UI mode**:
+   - Try keyboard shortcuts (F5, F6, F7)
+   - If those work, input system is functional
+
+4. **Check game compatibility**:
+   - Some games don't support keyboard input
+   - Try with a controller instead
+
+</Accordion>
+
+<Accordion title="Controller not detected">
+
+**Problem**: Game controller not recognized.
+
+**Current Status**:
+<Warning>
+Controller support is currently limited. Native PS3 DualShock 3 support is planned but not yet implemented.
+</Warning>
+
+**Workarounds**:
+1. Use keyboard input (see keyboard mapping in config)
+2. Use generic gamepad (may work with some games)
+3. Wait for controller support implementation
+
+**Check support status**:
+- See [development roadmap](/development)
+- Track issue on GitHub
+
+</Accordion>
+
+## Error messages
+
+<Accordion title="Error: Unknown syscall">
+
+**Message**:
+```
+[ERROR] Kernel error: Unknown syscall: 123
+```
+
+**Meaning**: Game is calling a system function not yet implemented.
+
+**Impact**:
+- Function will return an error code
+- Game may handle gracefully or crash
+- Feature may not work
+
+**Action**:
+- Note the syscall number
+- Check if game still runs
+- Report on GitHub with game details
+
+</Accordion>
+
+<Accordion title="Error: Shader compilation failed">
+
+**Message**:
+```
+[ERROR] RSX error: Shader compilation failed: <error details>
+```
+
+**Meaning**: RSX shader could not be compiled to Vulkan.
+
+**Solutions**:
+1. Enable shader dumping:
+   ```toml
+   [debug]
+   dump_shaders = true
+   ```
+2. Check `cache/shaders/dumps/` for shader source
+3. Update GPU drivers
+4. Report issue with shader dump
+
+</Accordion>
+
+<Accordion title="Error: Access violation">
+
+**Message**:
+```
+[ERROR] Memory error: Access violation at 0xDEADBEEF: write
+```
+
+**Meaning**: Game attempted to write to protected or invalid memory.
+
+**Common causes**:
+- Null pointer dereference
+- Buffer overflow
+- Uninitialized pointer
+- Emulation bug
+
+**Debug steps**:
+1. Enable debug logging
+2. Check address (0x00000000 = null pointer)
+3. Enable instruction tracing to find culprit
+4. Report with trace log
+
+</Accordion>
+
+## Getting help
+
+If you still experience issues:
+
+<Steps>
+  <Step title="Gather information">
+    Collect:
+    - Your system specs (CPU, GPU, RAM, OS)
+    - Emulator version/commit
+    - Game title and ID
+    - Full error logs
+    - Steps to reproduce
+  </Step>
+  
+  <Step title="Check existing issues">
+    Search GitHub issues:
+    - https://github.com/darkace1998/oxidized-cell/issues
+    - Your problem may already be reported
+    - Check for workarounds
+  </Step>
+  
+  <Step title="Enable debug logging">
+    ```toml
+    [debug]
+    log_level = "Debug"
+    log_to_file = true
+    ```
+    Save the log file for your report.
+  </Step>
+  
+  <Step title="Report the issue">
+    Create a new GitHub issue with:
+    - Descriptive title
+    - System information
+    - Steps to reproduce
+    - Error logs (use code blocks)
+    - Screenshots if relevant
+  </Step>
+</Steps>
+
+## System requirements reminder
+
+<Note>
+Ensure your system meets the minimum requirements:
+
+**Minimum**:
+- CPU: x86_64 with AVX2 support
+- GPU: Vulkan 1.2+ compatible
+- RAM: 8GB
+- OS: Windows 10, Linux (kernel 5.4+), macOS 11+
+
+**Recommended**:
+- CPU: Modern 6+ core processor
+- GPU: Dedicated GPU with 4GB+ VRAM
+- RAM: 16GB
+- SSD storage
+</Note>
+
+## Known limitations
+
+<Warning>
+oxidized-cell is in early development. Be aware of these limitations:
+
+- **Limited game compatibility**: Many games won't work yet
+- **No network features**: Online functionality not implemented
+- **Missing HLE modules**: Many system functions incomplete
+- **Performance varies**: Some games run slower than real hardware
+- **Save states**: Not yet implemented
+- **Trophy support**: Not implemented
+</Warning>
+
+Check the [development status](/development) for current progress and roadmap.

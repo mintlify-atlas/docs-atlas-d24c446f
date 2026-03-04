@@ -1,0 +1,393 @@
+---
+title: Installation
+description: Install oxidized-cell on Linux, Windows, and macOS with complete setup instructions
+---
+
+This guide will walk you through installing oxidized-cell on your system. The emulator requires several dependencies and build tools to compile from source.
+
+<Note>
+  oxidized-cell is under active development. Game compatibility is limited and many features are still being implemented.
+</Note>
+
+## System requirements
+
+### Minimum requirements
+
+| Component | Requirement |
+|-----------|-------------|
+| **OS** | Windows 10 64-bit, Linux (Ubuntu 20.04+), macOS 11+ |
+| **CPU** | x86-64 processor with SSE4.2 support |
+| **RAM** | 8 GB |
+| **GPU** | Vulkan 1.2 compatible graphics card |
+| **Storage** | 500 MB for emulator + game storage |
+
+### Recommended requirements
+
+| Component | Recommendation |
+|-----------|----------------|
+| **CPU** | Intel Core i7 / AMD Ryzen 5 or better |
+| **RAM** | 16 GB or more |
+| **GPU** | NVIDIA GTX 1060 / AMD RX 580 or better |
+| **Storage** | SSD with adequate space for games |
+
+## Prerequisites
+
+Before building oxidized-cell, you need to install these tools:
+
+- **Rust** 1.80+ (via rustup)
+- **C++ Compiler** with C++20 support (GCC 9+, Clang 10+, MSVC 2019+)
+- **CMake** 3.20+
+- **LLVM** 14+ (for JIT compilation)
+- **Vulkan SDK** 1.2+
+
+## Installation by platform
+
+<Tabs>
+  <Tab title="Linux">
+    <Steps>
+      <Step title="Install dependencies">
+        On Ubuntu/Debian-based distributions:
+
+        ```bash
+        sudo apt update
+        sudo apt install -y build-essential cmake llvm-dev libvulkan-dev libasound2-dev
+        ```
+
+        On Fedora/RHEL-based distributions:
+
+        ```bash
+        sudo dnf install gcc gcc-c++ cmake llvm-devel vulkan-devel alsa-lib-devel
+        ```
+
+        On Arch Linux:
+
+        ```bash
+        sudo pacman -S base-devel cmake llvm vulkan-headers vulkan-icd-loader alsa-lib
+        ```
+      </Step>
+
+      <Step title="Install Rust">
+        If you don't have Rust installed:
+
+        ```bash
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+        source $HOME/.cargo/env
+        ```
+
+        Verify the installation:
+
+        ```bash
+        rustc --version
+        ```
+      </Step>
+
+      <Step title="Clone the repository">
+        ```bash
+        git clone https://github.com/darkace1998/oxidized-cell.git
+        cd oxidized-cell
+        ```
+      </Step>
+
+      <Step title="Build the emulator">
+        Build in release mode for optimal performance:
+
+        ```bash
+        cargo build --release
+        ```
+
+        The build process will:
+        - Compile all Rust crates
+        - Build the C++ JIT components with LLVM
+        - Link all dependencies
+
+        This may take 5-10 minutes depending on your system.
+      </Step>
+
+      <Step title="Run the emulator">
+        ```bash
+        ./target/release/oxidized-cell
+        ```
+
+        Or install it system-wide:
+
+        ```bash
+        cargo install --path .
+        oxidized-cell
+        ```
+      </Step>
+    </Steps>
+
+    <Warning>
+      Make sure your GPU drivers support Vulkan 1.2 or later. You can verify with `vulkaninfo`.
+    </Warning>
+  </Tab>
+
+  <Tab title="Windows">
+    <Steps>
+      <Step title="Install Visual Studio">
+        Download and install [Visual Studio 2019 or later](https://visualstudio.microsoft.com/) with the **Desktop development with C++** workload.
+
+        This provides the MSVC compiler required for building C++ components.
+      </Step>
+
+      <Step title="Install Rust">
+        Download and run [rustup-init.exe](https://rustup.rs) from the official Rust website.
+
+        Follow the installation prompts. Rustup will automatically detect your Visual Studio installation.
+
+        Verify the installation in PowerShell:
+
+        ```powershell
+        rustc --version
+        ```
+      </Step>
+
+      <Step title="Install Vulkan SDK">
+        Download the [Vulkan SDK](https://vulkan.lunarg.com/) installer for Windows and run it.
+
+        Make sure to check the option to add Vulkan to your system PATH.
+      </Step>
+
+      <Step title="Install CMake (optional)">
+        While CMake is included with Visual Studio, you can also install it separately:
+
+        ```powershell
+        winget install Kitware.CMake
+        ```
+      </Step>
+
+      <Step title="Clone the repository">
+        Using PowerShell or Command Prompt:
+
+        ```powershell
+        git clone https://github.com/darkace1998/oxidized-cell.git
+        cd oxidized-cell
+        ```
+      </Step>
+
+      <Step title="Build the emulator">
+        Build in release mode:
+
+        ```powershell
+        cargo build --release
+        ```
+
+        The build uses MSVC with the following optimizations:
+        - C++20 standard (`/std:c++20`)
+        - AVX2 SIMD instructions (`/arch:AVX2`)
+        - Thin LTO for smaller binaries
+
+        This may take 5-10 minutes.
+      </Step>
+
+      <Step title="Run the emulator">
+        ```powershell
+        .\target\release\oxidized-cell.exe
+        ```
+      </Step>
+    </Steps>
+
+    <Note>
+      If you encounter issues with LLVM, you can install it separately via [LLVM releases](https://releases.llvm.org/) or using `winget install LLVM.LLVM`.
+    </Note>
+  </Tab>
+
+  <Tab title="macOS">
+    <Steps>
+      <Step title="Install Homebrew">
+        If you don't have Homebrew installed:
+
+        ```bash
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        ```
+      </Step>
+
+      <Step title="Install dependencies">
+        ```bash
+        brew install llvm cmake rust
+        ```
+
+        This installs:
+        - LLVM (for JIT compilation)
+        - CMake (build system)
+        - Rust toolchain
+      </Step>
+
+      <Step title="Install Vulkan SDK">
+        macOS uses MoltenVK for Vulkan support. Install the Vulkan SDK:
+
+        ```bash
+        brew install --cask vulkan-sdk
+        ```
+
+        Or download from [LunarG's website](https://vulkan.lunarg.com/sdk/home).
+      </Step>
+
+      <Step title="Clone the repository">
+        ```bash
+        git clone https://github.com/darkace1998/oxidized-cell.git
+        cd oxidized-cell
+        ```
+      </Step>
+
+      <Step title="Build the emulator">
+        ```bash
+        cargo build --release
+        ```
+
+        The build will use Clang from Xcode Command Line Tools or Homebrew's LLVM.
+      </Step>
+
+      <Step title="Run the emulator">
+        ```bash
+        ./target/release/oxidized-cell
+        ```
+      </Step>
+    </Steps>
+
+    <Warning>
+      Apple Silicon (M1/M2/M3) Macs are supported, but performance may vary. The emulator includes ARM64-specific optimizations.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Verifying the installation
+
+After building, verify everything works correctly:
+
+<Steps>
+  <Step title="Check version">
+    ```bash
+    oxidized-cell --version
+    ```
+
+    Should output: `oxidized-cell 0.1.0`
+  </Step>
+
+  <Step title="Run tests">
+    Run the test suite to ensure all components are working:
+
+    ```bash
+    cargo test
+    ```
+
+    This runs 250+ tests across all components:
+    - Memory: 128+ tests
+    - PPU: 75+ tests
+    - SPU: 14+ tests
+    - RSX: 36+ tests
+  </Step>
+
+  <Step title="Launch the UI">
+    Run the emulator without arguments to launch the user interface:
+
+    ```bash
+    oxidized-cell
+    ```
+
+    You should see the main window with the game list view.
+  </Step>
+</Steps>
+
+## Build configuration
+
+The emulator uses Cargo's release profile for optimized builds:
+
+```toml
+[profile.release]
+lto = "thin"           # Thin Link-Time Optimization
+codegen-units = 1     # Single codegen unit for better optimization
+panic = "abort"       # Abort on panic for smaller binary size
+```
+
+For development builds with some optimization:
+
+```bash
+cargo build
+```
+
+Development builds include debug symbols and run with `opt-level = 1` for reasonable performance.
+
+## Troubleshooting
+
+### LLVM not found
+
+If CMake cannot find LLVM:
+
+<CodeGroup>
+```bash Linux
+# Set LLVM_DIR to your LLVM installation
+export LLVM_DIR=/usr/lib/llvm-14/cmake
+cargo build --release
+```
+
+```powershell Windows
+# Set LLVM_DIR environment variable
+$env:LLVM_DIR="C:\Program Files\LLVM\lib\cmake\llvm"
+cargo build --release
+```
+
+```bash macOS
+# Use Homebrew's LLVM
+export LLVM_DIR="$(brew --prefix llvm)/lib/cmake/llvm"
+cargo build --release
+```
+</CodeGroup>
+
+### Vulkan not found
+
+**Linux**: Install your GPU vendor's Vulkan drivers:
+- NVIDIA: `nvidia-vulkan-icd`
+- AMD: `mesa-vulkan-drivers`
+- Intel: `intel-media-va-driver`
+
+**Windows**: Ensure your GPU drivers are up to date. Vulkan support is included in modern drivers.
+
+**macOS**: Verify MoltenVK is installed with the Vulkan SDK.
+
+### Build fails with C++ errors
+
+Ensure you have a C++20-compatible compiler:
+
+<CodeGroup>
+```bash Linux
+# Check GCC version (needs 9+)
+gcc --version
+
+# Or use Clang (needs 10+)
+clang++ --version
+```
+
+```powershell Windows
+# Ensure Visual Studio 2019 or later is installed
+# Check from "Developer Command Prompt for VS"
+cl /?
+```
+
+```bash macOS
+# Check Clang version
+clang++ --version
+```
+</CodeGroup>
+
+### Out of memory during build
+
+Reduce parallelism:
+
+```bash
+cargo build --release -j 2
+```
+
+Or build without LTO:
+
+```bash
+CARGO_PROFILE_RELEASE_LTO=false cargo build --release
+```
+
+## Next steps
+
+Now that you have oxidized-cell installed:
+
+- [Set up PS3 firmware](/get-started/firmware-setup) to run commercial games
+- [Follow the quickstart guide](/get-started/quickstart) to run your first game
+- [Configure the emulator](/configuration/settings) for optimal performance

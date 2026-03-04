@@ -1,0 +1,299 @@
+---
+title: "oc_rsx"
+description: "Reality Synthesizer graphics emulation"
+---
+
+The `oc_rsx` crate implements the RSX graphics processor, based on NVIDIA G70/G71 architecture.
+
+## Overview
+
+The RSX thread processes graphics commands from the PPU and renders frames using a Vulkan or null backend.
+
+## RsxThread
+
+The main RSX command processor thread.
+
+### Creation
+
+<ParamField path="new" type="fn(memory: Arc<MemoryManager>) -> Self">
+  Creates a new RSX thread with the default (null) backend.
+  
+  ```rust
+  use oc_rsx::RsxThread;
+  
+  let rsx = RsxThread::new(memory);
+  ```
+</ParamField>
+
+<ParamField path="with_backend" type="fn(memory: Arc<MemoryManager>, backend: Box<dyn GraphicsBackend>) -> Self">
+  Creates an RSX thread with a specific graphics backend.
+  
+  ```rust
+  use oc_rsx::{RsxThread, VulkanBackend};
+  
+  let backend = Box::new(VulkanBackend::new()?);
+  let rsx = RsxThread::with_backend(memory, backend);
+  ```
+</ParamField>
+
+### Initialization
+
+<ParamField path="init_backend" type="fn(&mut self) -> Result<String>">
+  Initializes the graphics backend.
+  
+  ```rust
+  rsx.init_backend()?;
+  ```
+</ParamField>
+
+### Bridge communication
+
+<ParamField path="set_bridge_receiver" type="fn(&mut self, receiver: RsxBridgeReceiver)">
+  Sets the bridge receiver for receiving commands from cellGcm HLE.
+  
+  ```rust
+  use oc_core::create_rsx_bridge;
+  
+  let (sender, receiver) = create_rsx_bridge();
+  rsx.set_bridge_receiver(receiver);
+  // Pass sender to cellGcm HLE
+  ```
+</ParamField>
+
+<ParamField path="has_bridge" type="fn(&self) -> bool">
+  Checks if a bridge receiver is connected.
+</ParamField>
+
+<ParamField path="process_bridge_messages" type="fn(&mut self)">
+  Processes all pending messages from the bridge.
+  
+  Call this regularly in the RSX thread loop:
+  
+  ```rust
+  loop {
+      rsx.process_bridge_messages();
+      rsx.process_commands();
+      // ...
+  }
+  ```
+</ParamField>
+
+### Command processing
+
+<ParamField path="process_commands" type="fn(&mut self)">
+  Processes all pending RSX commands from the FIFO.
+  
+  ```rust
+  rsx.process_commands();
+  ```
+</ParamField>
+
+<ParamField path="begin_frame" type="fn(&mut self)">
+  Begins a new frame.
+</ParamField>
+
+<ParamField path="end_frame" type="fn(&mut self)">
+  Ends the current frame.
+</ParamField>
+
+### Display buffers
+
+<ParamField path="current_display_buffer" type="fn(&self) -> u32">
+  Returns the current display buffer index.
+</ParamField>
+
+<ParamField path="get_display_buffer" type="fn(&self, id: u32) -> Option<&DisplayBuffer>">
+  Gets information about a display buffer.
+  
+  ```rust
+  if let Some(buffer) = rsx.get_display_buffer(0) {
+      println!("Buffer 0: {}x{} at offset 0x{:X}",
+               buffer.width, buffer.height, buffer.offset);
+  }
+  ```
+</ParamField>
+
+## VulkanBackend
+
+Vulkan graphics backend implementation.
+
+### Creation
+
+<ParamField path="new" type="fn() -> Result<Self, String>">
+  Creates a new Vulkan backend.
+  
+  ```rust
+  use oc_rsx::VulkanBackend;
+  
+  let backend = VulkanBackend::new()?;
+  ```
+</ParamField>
+
+### Configuration
+
+The Vulkan backend automatically configures:
+
+- **Render targets** - Multiple render targets (MRT) support
+- **MSAA** - Multi-sample anti-aliasing
+- **Anisotropic filtering** - Configurable level (up to 16x)
+- **Pipeline caching** - Reuses compiled pipelines
+- **Memory management** - GPU memory allocator with suballocation
+- **Staging buffers** - Efficient texture and vertex uploads
+
+### Features
+
+- **Shader translation** - RSX shader bytecode → SPIR-V
+- **Vertex formats** - All RSX vertex attribute types
+- **Texture formats** - DXT, BC7, uncompressed formats
+- **Blending** - Per-attachment blend modes
+- **Depth/stencil** - Full depth and stencil support
+- **Tiled memory** - RSX tiled memory layout emulation
+
+## NullBackend
+
+No-op graphics backend for headless testing.
+
+<ParamField path="new" type="fn() -> Self">
+  Creates a null backend that discards all rendering commands.
+  
+  ```rust
+  use oc_rsx::NullBackend;
+  
+  let backend = NullBackend::new();
+  ```
+</ParamField>
+
+## Types
+
+### RsxThreadState
+
+<ResponseField name="RsxThreadState" type="enum">
+  RSX thread state
+  
+  - `Stopped` - Thread is stopped
+  - `Running` - Thread is processing commands
+  - `Idle` - Thread is idle (no commands)
+</ResponseField>
+
+### DisplayBuffer
+
+<ResponseField name="DisplayBuffer" type="struct">
+  Display buffer configuration
+  
+  ```rust
+  pub struct DisplayBuffer {
+      pub offset: u32,      // Buffer offset in memory
+      pub pitch: u32,       // Pitch (bytes per line)
+      pub width: u32,       // Width in pixels
+      pub height: u32,      // Height in pixels
+      pub configured: bool, // Whether buffer is configured
+  }
+  ```
+</ResponseField>
+
+### RsxState
+
+<ResponseField name="RsxState" type="struct">
+  Complete RSX graphics state
+  
+  Tracks all RSX registers and state:
+  
+  - Viewport and scissor rectangles
+  - Vertex attribute formats and offsets
+  - Texture bindings and samplers
+  - Shader program addresses
+  - Blend modes and color masks
+  - Depth and stencil state
+  - Surface configuration
+  
+  ```rust
+  pub struct RsxState {
+      pub viewport_x: f32,
+      pub viewport_y: f32,
+      pub viewport_width: f32,
+      pub viewport_height: f32,
+      pub depth_min: f32,
+      pub depth_max: f32,
+      // ... many more fields
+  }
+  ```
+</ResponseField>
+
+### FramebufferData
+
+<ResponseField name="FramebufferData" type="struct">
+  Framebuffer pixel data
+  
+  ```rust
+  pub struct FramebufferData {
+      pub width: u32,
+      pub height: u32,
+      pub pitch: u32,
+      pub data: Vec<u8>,  // RGBA8 pixel data
+  }
+  ```
+</ResponseField>
+
+## Graphics backend trait
+
+### GraphicsBackend
+
+Trait for implementing RSX graphics backends.
+
+```rust
+pub trait GraphicsBackend {
+    fn init(&mut self) -> Result<(), String>;
+    fn begin_frame(&mut self);
+    fn end_frame(&mut self);
+    fn present_frame(&mut self, buffer_id: u32);
+    
+    fn set_viewport(&mut self, x: f32, y: f32, w: f32, h: f32, min_z: f32, max_z: f32);
+    fn set_scissor(&mut self, x: u32, y: u32, w: u32, h: u32);
+    
+    fn bind_texture(&mut self, unit: u32, offset: u32);
+    fn upload_texture(&mut self, offset: u32, width: u32, height: u32, format: u32, data: &[u8]);
+    
+    fn set_vertex_attributes(&mut self, attributes: &[VertexAttribute]);
+    fn upload_vertex_data(&mut self, data: &[u8]) -> u32;
+    
+    fn draw_arrays(&mut self, mode: PrimitiveType, first: u32, count: u32);
+    fn draw_indexed(&mut self, mode: PrimitiveType, count: u32, index_type: u32);
+    
+    fn clear(&mut self, color: bool, depth: bool, stencil: bool);
+}
+```
+
+## Constants
+
+<ResponseField name="MAX_DISPLAY_BUFFERS" type="usize">
+  Maximum number of display buffers: 8
+</ResponseField>
+
+## Example usage
+
+### Basic RSX setup
+
+```rust
+use oc_rsx::{RsxThread, VulkanBackend};
+use oc_memory::MemoryManager;
+use oc_core::create_rsx_bridge;
+use std::sync::Arc;
+
+// Create memory and backend
+let memory = MemoryManager::new()?;
+let backend = Box::new(VulkanBackend::new()?);
+
+// Create RSX thread
+let mut rsx = RsxThread::with_backend(memory, backend);
+rsx.init_backend()?;
+
+// Setup bridge for cellGcm communication
+let (gcm_sender, rsx_receiver) = create_rsx_bridge();
+rsx.set_bridge_receiver(rsx_receiver);
+
+// Main loop
+loop {
+    rsx.process_bridge_messages();
+    rsx.process_commands();
+}
+```

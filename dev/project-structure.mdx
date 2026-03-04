@@ -1,0 +1,528 @@
+---
+title: Project structure
+description: Understanding the oxidized-cell codebase organization and architecture
+---
+
+## Overview
+
+oxidized-cell uses a hybrid Rust/C++ architecture organized as a Cargo workspace. The Rust code handles core emulation logic, system management, and UI, while C++ provides high-performance JIT compilation using LLVM.
+
+<Info>
+The project follows a modular design where each major component is isolated into its own crate with well-defined interfaces.
+</Info>
+
+## Repository structure
+
+```
+oxidized-cell/
+├── crates/              # Rust workspace crates
+├── cpp/                 # C++ performance components
+├── src/                 # Main binary entry point
+├── examples/            # Example programs
+├── scripts/             # Build and utility scripts
+├── docs/                # Project documentation
+├── .cargo/              # Cargo configuration
+├── .github/             # CI/CD workflows
+├── Cargo.toml           # Workspace manifest
+├── rust-toolchain.toml  # Rust version specification
+└── build-windows.sh     # Windows cross-compilation script
+```
+
+## Rust workspace crates
+
+The project is organized into 15 crates under `crates/`:
+
+### Core infrastructure
+
+<CardGroup cols={2}>
+  <Card title="oc-core" icon="microchip">
+    **Core emulator infrastructure**
+    - Configuration system (`config.rs`)
+    - Main emulator struct (`emulator.rs`)
+    - Error types (`error.rs`)
+    - Logging setup (`logging.rs`)
+    - Component bridges (`rsx_bridge.rs`, `spu_bridge.rs`)
+    - Task scheduler (`scheduler.rs`)
+  </Card>
+
+  <Card title="oc-memory" icon="memory">
+    **Memory management**
+    - 4GB virtual address space
+    - 4KB page granularity
+    - Memory protection (read/write/execute)
+    - TLB simulation
+    - 128+ test cases
+  </Card>
+
+  <Card title="oc-ffi" icon="link">
+    **Rust/C++ FFI bridge**
+    - JIT compiler interface (`jit.rs`)
+    - Atomic operations (`atomics.rs`)
+    - DMA helpers (`dma.rs`)
+    - SIMD wrappers (`simd.rs`)
+    - Type definitions (`types.rs`)
+  </Card>
+
+  <Card title="oc-integration" icon="puzzle-piece">
+    **Integration layer**
+    - `EmulatorRunner` orchestration
+    - Component initialization
+    - Cross-component communication
+    - 4+ integration tests
+  </Card>
+</CardGroup>
+
+### CPU emulation
+
+<CardGroup cols={2}>
+  <Card title="oc-ppu" icon="cpu">
+    **PowerPC Processing Unit**
+    - Full interpreter (2,700+ lines)
+    - Integer, FP, branch, load/store instructions
+    - VMX/AltiVec SIMD (128-bit vectors)
+    - FPSCR flag handling
+    - Breakpoint support
+    - 75+ test cases
+  </Card>
+
+  <Card title="oc-spu" icon="microchip">
+    **Synergistic Processing Unit**
+    - Complete interpreter
+    - 128x 128-bit vector registers
+    - 256KB Local Storage per SPU
+    - Memory Flow Controller (MFC)
+    - Channel communication
+    - 14+ test cases
+  </Card>
+</CardGroup>
+
+### Graphics and audio
+
+<CardGroup cols={2}>
+  <Card title="oc-rsx" icon="display">
+    **RSX graphics processor**
+    - Vulkan backend (`ash` crate)
+    - NV4097 method handlers
+    - 16 vertex attributes, 16 texture units
+    - Blend/depth/stencil state
+    - Multi-frame synchronization
+    - 36+ test cases
+  </Card>
+
+  <Card title="oc-audio" icon="volume">
+    **Audio subsystem**
+    - `cpal` backend (cross-platform)
+    - 8 audio ports
+    - Multi-channel support
+    - 48kHz sample rate
+    - Volume control
+  </Card>
+</CardGroup>
+
+### System software
+
+<CardGroup cols={2}>
+  <Card title="oc-lv2" icon="shield">
+    **LV2 kernel emulation**
+    - Process and thread management
+    - Synchronization primitives:
+      - Mutex, condition variables
+      - Semaphores, rwlocks
+    - Memory allocation syscalls
+    - Time management
+  </Card>
+
+  <Card title="oc-hle" icon="server">
+    **High-level emulation modules**
+    - `cellGcmSys` - Graphics management
+    - `cellSysutil` - System utilities
+    - `cellSpurs` - SPU runtime
+    - `cellPad` - Controller input
+    - `cellFs` - Filesystem
+    - NID symbol resolution
+  </Card>
+</CardGroup>
+
+### File systems and loaders
+
+<CardGroup cols={2}>
+  <Card title="oc-vfs" icon="folder-open">
+    **Virtual filesystem**
+    - ISO 9660 support
+    - PKG package format
+    - PARAM.SFO parsing
+    - Mount point management
+  </Card>
+
+  <Card title="oc-loader" icon="file-code">
+    **Executable loaders**
+    - ELF file parsing
+    - SELF (signed ELF) support
+    - PRX shared libraries
+    - Symbol resolution
+    - Relocation handling
+  </Card>
+</CardGroup>
+
+### Input and UI
+
+<CardGroup cols={2}>
+  <Card title="oc-input" icon="gamepad">
+    **Input handling**
+    - Controller emulation
+    - Keyboard mapping
+    - Mouse support
+    - Customizable key bindings
+  </Card>
+
+  <Card title="oc-ui" icon="window">
+    **User interface**
+    - `egui` immediate mode GUI
+    - Game browser
+    - Configuration editor
+    - Debug windows
+    - Log viewer
+  </Card>
+</CardGroup>
+
+### Debugging
+
+<Card title="oc-debug" icon="bug">
+  **Debugging tools**
+  - Breakpoint management
+  - Register inspection
+  - Memory viewer
+  - Disassembly
+</Card>
+
+## C++ performance layer
+
+Location: `cpp/`
+
+### Build system
+
+```
+cpp/
+├── CMakeLists.txt       # CMake configuration
+├── include/
+│   └── oc_ffi.h        # FFI header for Rust
+└── src/
+    ├── ffi.cpp         # FFI implementations
+    ├── ppu_jit.cpp     # PPU JIT (LLVM)
+    ├── spu_jit.cpp     # SPU JIT (LLVM)
+    ├── rsx_shaders.cpp # SPIR-V shader compilation
+    ├── atomics.cpp     # 128-byte atomic operations
+    ├── dma.cpp         # DMA optimizations
+    └── simd_avx.cpp    # AVX2 helpers (x86_64 only)
+```
+
+### CMake configuration highlights
+
+```cmake
+set(CMAKE_CXX_STANDARD 20)
+
+# LLVM components for JIT
+llvm_map_components_to_libnames(LLVM_LIBS
+    Core ExecutionEngine MCJIT OrcJIT
+    Support Target PowerPC X86 AArch64
+    TransformUtils Analysis Passes
+)
+
+# Platform optimizations
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+    add_compile_options(-mavx2 -mbmi2)
+endif()
+```
+
+### JIT compilation
+
+The JIT compilers use LLVM IR generation:
+
+<Steps>
+  <Step title="Decode instruction">
+    Parse PowerPC/SPU instruction bytes
+  </Step>
+  <Step title="Generate LLVM IR">
+    Translate to LLVM intermediate representation
+  </Step>
+  <Step title="Optimize">
+    Apply O2-level optimization passes
+  </Step>
+  <Step title="Execute">
+    JIT compile to native code and execute
+  </Step>
+</Steps>
+
+**Supported instructions:**
+- PPU: 20+ PowerPC instructions
+- SPU: 15+ SIMD instructions
+
+## Main binary
+
+Location: `src/main.rs`
+
+```rust
+use oc_ui::App;
+use oc_core::EmulatorConfig;
+use oc_integration::EmulatorRunner;
+
+fn main() {
+    // Initialize logging
+    oc_core::logging::init();
+    
+    // Parse command line arguments
+    let args = parse_args();
+    
+    // Launch UI or headless mode
+    if args.headless {
+        run_headless(&args);
+    } else {
+        eframe::run_native(/* ... */);
+    }
+}
+```
+
+## Configuration files
+
+### Cargo workspace (`Cargo.toml`)
+
+```toml
+[workspace]
+resolver = "2"
+members = [
+    "crates/oc-core",
+    "crates/oc-memory",
+    # ... 13 more crates
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "GPL-3.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+```
+
+### Cargo configuration (`.cargo/config.toml`)
+
+```toml
+[build]
+incremental = true
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
+
+[alias]
+xtask = "run --package xtask --"
+```
+
+### Rust toolchain (`rust-toolchain.toml`)
+
+```toml
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+```
+
+## Dependency management
+
+### Key Rust dependencies
+
+<Tabs>
+  <Tab title="Graphics">
+    - `ash` 0.38 - Vulkan bindings
+    - `gpu-allocator` 0.27 - GPU memory management
+    - `egui` 0.29 - UI framework
+  </Tab>
+  <Tab title="Audio">
+    - `cpal` 0.15 - Cross-platform audio
+  </Tab>
+  <Tab title="Async">
+    - `tokio` 1.0 - Async runtime
+    - `crossbeam` 0.8 - Concurrent data structures
+    - `parking_lot` 0.12 - Fast synchronization primitives
+  </Tab>
+  <Tab title="Serialization">
+    - `serde` 1.0 - Serialization framework
+    - `toml` 0.8 - TOML parsing
+    - `serde_json` 1.0 - JSON support
+  </Tab>
+  <Tab title="Error handling">
+    - `thiserror` 1.0 - Error derive macros
+    - `anyhow` 1.0 - Error handling
+  </Tab>
+  <Tab title="Utilities">
+    - `bytemuck` 1.14 - Type casting
+    - `bitflags` 2.4 - Bit flag macros
+    - `tracing` 0.1 - Logging
+  </Tab>
+</Tabs>
+
+### C++ dependencies
+
+- **LLVM 14+** - JIT compilation infrastructure
+- **CMake 3.20+** - Build system
+- **Compiler**: GCC 9+, Clang 10+, or MSVC 2019+
+
+## Architecture diagram
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    oxidized-cell                         │
+├─────────────────────────────────────────────────────────┤
+│  ┌───────────────────────────────────────────────────┐  │
+│  │             Rust Layer (70%)                      │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐           │  │
+│  │  │  Memory  │ │  Kernel  │ │  Thread  │           │  │
+│  │  │  Manager │ │  (LV2)   │ │  Manager │           │  │
+│  │  └──────────┘ └──────────┘ └──────────┘           │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐           │  │
+│  │  │   VFS    │ │  Audio   │ │  Input   │           │  │
+│  │  │          │ │  Backend │ │  Handler │           │  │
+│  │  └──────────┘ └──────────┘ └──────────┘           │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐           │  │
+│  │  │  Config  │ │    UI    │ │  Loader  │           │  │
+│  │  │  System  │ │  (egui)  │ │  (ELF)   │           │  │
+│  │  └──────────┘ └──────────┘ └──────────┘           │  │
+│  └───────────────────────────────────────────────────┘  │
+│                        │ FFI Bridge                      │
+│                        ▼                                 │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │           C++ Performance Layer (30%)             │  │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌───────────┐  │  │
+│  │  │   PPU JIT    │ │   SPU JIT    │ │    RSX    │  │  │
+│  │  │   (LLVM)     │ │   (LLVM)     │ │  Shaders  │  │  │
+│  │  └──────────────┘ └──────────────┘ └───────────┘  │  │
+│  │  ┌──────────────┐ ┌──────────────┐                │  │
+│  │  │   Atomics    │ │  SIMD/AVX2   │                │  │
+│  │  │  (128-byte)  │ │   Helpers    │                │  │
+│  │  └──────────────┘ └──────────────┘                │  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Data flow
+
+<Steps>
+  <Step title="Game loading">
+    User selects game → `oc-vfs` mounts ISO/PKG → `oc-loader` parses ELF/SELF → Load into `oc-memory`
+  </Step>
+  <Step title="Execution">
+    `oc-ppu` fetches instructions → Interpret or JIT compile → Execute on PPU thread
+  </Step>
+  <Step title="Graphics">
+    Game calls `cellGcmSys` (HLE) → `oc-rsx` processes commands → Vulkan rendering
+  </Step>
+  <Step title="Audio">
+    Game writes audio data → `oc-audio` buffers samples → `cpal` outputs to hardware
+  </Step>
+  <Step title="Input">
+    User input → `oc-input` maps to PS3 controller → Game reads via `cellPad` (HLE)
+  </Step>
+</Steps>
+
+## Testing structure
+
+Each crate has its own test suite:
+
+```bash
+crates/
+├── oc-memory/
+│   └── src/
+│       ├── lib.rs
+│       └── tests/
+│           ├── page_mapping.rs    # 40+ tests
+│           ├── protection.rs      # 30+ tests
+│           └── tlb.rs              # 20+ tests
+├── oc-ppu/
+│   └── src/
+│       ├── interpreter.rs
+│       └── tests/
+│           ├── integer.rs         # 25+ tests
+│           ├── float.rs           # 20+ tests
+│           └── vmx.rs             # 15+ tests
+└── ...
+```
+
+## Examples
+
+Location: `examples/`
+
+```rust
+// examples/test_iso_loading.rs
+use oc_vfs::IsoFileSystem;
+
+fn main() {
+    let iso = IsoFileSystem::open("game.iso")?;
+    for entry in iso.root_dir().entries() {
+        println!("{}", entry.name());
+    }
+}
+```
+
+Run with:
+```bash
+cargo run --example test_iso_loading
+```
+
+## Scripts and utilities
+
+Location: `scripts/`
+
+- `download-firmware.sh` - Download PS3 firmware from Sony
+- `download-firmware.bat` - Windows version
+
+## Documentation
+
+Location: `docs/` (source repo)
+
+- `ppu_instructions.md` - PPU instruction reference
+- `spu_instructions.md` - SPU instruction reference
+- `HLE_STATUS.md` - HLE module implementation status
+
+## CI/CD
+
+Location: `.github/workflows/`
+
+### CI workflow (`ci.yml`)
+
+```yaml
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - Install system dependencies
+      - Install Rust toolchain
+      - Cache cargo registry
+      - Build workspace
+      - Run tests for each crate
+```
+
+## Code style
+
+### Rust
+
+- Format with `rustfmt`: `cargo fmt`
+- Lint with `clippy`: `cargo clippy`
+- Follow standard Rust conventions
+
+### C++
+
+- C++20 standard
+- Use `clang-format` with project settings
+- LLVM coding style
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Building from source" icon="hammer" href="/dev/building">
+    Learn how to build the project
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+    Start contributing code
+  </Card>
+</CardGroup>

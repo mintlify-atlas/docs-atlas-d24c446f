@@ -1,0 +1,477 @@
+---
+title: "oc_memory"
+description: "Memory management for the PS3 address space"
+---
+
+The `oc_memory` crate provides the virtual memory system that mimics the PS3's 32-bit address space, including reservation system for SPU atomics.
+
+## Overview
+
+Key features:
+
+- 32-bit virtual address space management
+- Page-level memory protection
+- Reservation system for load-link/store-conditional (atomics)
+- RSX memory mapping
+- Shared memory regions between PPU and SPU
+- Memory watchpoints for debugging
+- Cache simulation and profiling
+
+## MemoryManager
+
+The main memory manager providing the PS3's virtual address space.
+
+### Creation
+
+<ParamField path="new" type="fn() -> Result<Arc<Self>, MemoryError>">
+  Creates a new memory manager with initialized address space.
+  
+  ```rust
+  use oc_memory::MemoryManager;
+  
+  let memory = MemoryManager::new()?;
+  ```
+</ParamField>
+
+### Memory access
+
+<ParamField path="read" type="fn<T: Copy>(&self, addr: u32) -> Result<T, MemoryError>">
+  Reads a value from memory with bounds and permission checking.
+  
+  ```rust
+  let value: u32 = memory.read(0x10000)?;
+  let byte: u8 = memory.read(0x10004)?;
+  ```
+</ParamField>
+
+<ParamField path="write" type="fn<T: Copy>(&self, addr: u32, value: T) -> Result<(), MemoryError>">
+  Writes a value to memory with bounds and permission checking.
+  
+  ```rust
+  memory.write(0x10000, 0x12345678u32)?;
+  memory.write(0x10004, 0xABu8)?;
+  ```
+</ParamField>
+
+<ParamField path="read_unchecked" type="fn<T: Copy>(&self, addr: u32) -> T">
+  Reads a value without checking (for hot paths after validation).
+  
+  ## Safety
+  Caller must ensure the address is valid and readable.
+  
+  ```rust
+  unsafe {
+      let value: u32 = memory.read_unchecked(0x10000);
+  }
+  ```
+</ParamField>
+
+<ParamField path="write_unchecked" type="fn<T: Copy>(&self, addr: u32, value: T)">
+  Writes a value without checking (for hot paths after validation).
+  
+  ## Safety
+  Caller must ensure the address is valid and writable.
+</ParamField>
+
+### Big-endian access
+
+<ParamField path="read_be16" type="fn(&self, addr: u32) -> Result<u16, MemoryError>">
+  Reads a 16-bit big-endian value.
+</ParamField>
+
+<ParamField path="read_be32" type="fn(&self, addr: u32) -> Result<u32, MemoryError>">
+  Reads a 32-bit big-endian value.
+  
+  ```rust
+  let instruction = memory.read_be32(pc)?;
+  ```
+</ParamField>
+
+<ParamField path="read_be64" type="fn(&self, addr: u32) -> Result<u64, MemoryError>">
+  Reads a 64-bit big-endian value.
+</ParamField>
+
+<ParamField path="write_be16" type="fn(&self, addr: u32, value: u16) -> Result<(), MemoryError>">
+  Writes a 16-bit big-endian value.
+</ParamField>
+
+<ParamField path="write_be32" type="fn(&self, addr: u32, value: u32) -> Result<(), MemoryError>">
+  Writes a 32-bit big-endian value.
+</ParamField>
+
+<ParamField path="write_be64" type="fn(&self, addr: u32, value: u64) -> Result<(), MemoryError>">
+  Writes a 64-bit big-endian value.
+</ParamField>
+
+### Byte array access
+
+<ParamField path="read_bytes" type="fn(&self, addr: u32, size: u32) -> Result<Vec<u8>, MemoryError>">
+  Reads a byte array from memory.
+  
+  ```rust
+  let data = memory.read_bytes(0x10000, 256)?;
+  ```
+</ParamField>
+
+<ParamField path="write_bytes" type="fn(&self, addr: u32, data: &[u8]) -> Result<(), MemoryError>">
+  Writes a byte array to memory.
+  
+  ```rust
+  memory.write_bytes(0x10000, &data)?;
+  ```
+</ParamField>
+
+### String access
+
+<ParamField path="read_string" type="fn(&self, addr: u32) -> Result<String, MemoryError>">
+  Reads a null-terminated string from memory.
+  
+  ```rust
+  let name = memory.read_string(0x10000)?;
+  println!("Name: {}", name);
+  ```
+</ParamField>
+
+<ParamField path="write_string" type="fn(&self, addr: u32, s: &str) -> Result<(), MemoryError>">
+  Writes a null-terminated string to memory.
+</ParamField>
+
+### Pointer access
+
+<ParamField path="base_ptr" type="fn(&self) -> *mut u8">
+  Returns the base pointer for the address space.
+  
+  This is used by JIT code for direct memory access.
+  
+  ```rust
+  let base = memory.base_ptr();
+  // JIT adds offsets to this base
+  ```
+</ParamField>
+
+<ParamField path="address_space_size" type="fn(&self) -> u64">
+  Returns the total size of the address space (4 GB).
+</ParamField>
+
+<ParamField path="get_ptr" type="fn(&self, addr: u32, size: u32, flags: PageFlags) -> Result<*mut u8, MemoryError>">
+  Gets a pointer with bounds and permission checking.
+  
+  ```rust
+  use oc_memory::PageFlags;
+  
+  let ptr = memory.get_ptr(0x10000, 1024, PageFlags::READ)?;
+  ```
+</ParamField>
+
+### Page management
+
+<ParamField path="allocate" type="fn(&self, size: u32, align: u32, flags: PageFlags) -> Result<u32, MemoryError>">
+  Allocates memory in the user memory region.
+  
+  ```rust
+  use oc_memory::PageFlags;
+  
+  let addr = memory.allocate(0x10000, 0x1000, PageFlags::RWX)?;
+  ```
+</ParamField>
+
+<ParamField path="deallocate" type="fn(&self, addr: u32, size: u32) -> Result<(), MemoryError>">
+  Deallocates previously allocated memory.
+</ParamField>
+
+<ParamField path="set_page_flags" type="fn(&self, addr: u32, size: u32, flags: PageFlags) -> Result<(), MemoryError>">
+  Sets page protection flags for a memory region.
+  
+  ```rust
+  use oc_memory::PageFlags;
+  
+  // Make code executable
+  memory.set_page_flags(0x10000, 0x1000, PageFlags::RX)?;
+  ```
+</ParamField>
+
+<ParamField path="check_access" type="fn(&self, addr: u32, size: u32, required: PageFlags) -> Result<(), MemoryError>">
+  Checks if a memory access is valid.
+  
+  ```rust
+  use oc_memory::PageFlags;
+  
+  if memory.check_access(0x10000, 4, PageFlags::READ).is_ok() {
+      println!("Address is readable");
+  }
+  ```
+</ParamField>
+
+### Reservations (atomics)
+
+<ParamField path="reservation" type="fn(&self, addr: u32) -> &Reservation">
+  Gets the reservation for an address (for load-link/store-conditional).
+  
+  ```rust
+  let reservation = memory.reservation(0x10000);
+  reservation.acquire(thread_id);
+  // ... perform load-link
+  if reservation.check(thread_id) {
+      // ... perform store-conditional
+  }
+  ```
+</ParamField>
+
+### Shared memory regions
+
+<ParamField path="create_shared_region" type="fn(&self, main_addr: u32, size: u32, flags: PageFlags) -> Result<u32, MemoryError>">
+  Creates a shared memory region for PPU/SPU communication.
+  
+  ```rust
+  use oc_memory::PageFlags;
+  
+  let region_id = memory.create_shared_region(
+      0x10000000,
+      0x100000,  // 1 MB
+      PageFlags::RW,
+  )?;
+  ```
+</ParamField>
+
+<ParamField path="grant_spu_access" type="fn(&self, region_id: u32, spu_id: u32) -> Result<(), MemoryError>">
+  Grants an SPU access to a shared memory region.
+  
+  ```rust
+  memory.grant_spu_access(region_id, 0)?;  // Grant SPU 0 access
+  ```
+</ParamField>
+
+<ParamField path="revoke_spu_access" type="fn(&self, region_id: u32, spu_id: u32) -> Result<(), MemoryError>">
+  Revokes SPU access from a shared memory region.
+</ParamField>
+
+### RSX memory mapping
+
+<ParamField path="map_rsx_memory" type="fn(&self, rsx_offset: u32, main_addr: u32, size: u32) -> Result<(), MemoryError>">
+  Maps main memory to RSX address space.
+  
+  ```rust
+  // Map 16 MB at main memory 0x40000000 to RSX offset 0
+  memory.map_rsx_memory(0, 0x40000000, 0x1000000)?;
+  ```
+</ParamField>
+
+<ParamField path="unmap_rsx_memory" type="fn(&self, rsx_offset: u32) -> Result<(), MemoryError>">
+  Unmaps RSX memory.
+</ParamField>
+
+## Memory regions
+
+### MemoryRegion
+
+<ResponseField name="MemoryRegion" type="struct">
+  Describes a memory region
+  
+  ```rust
+  pub struct MemoryRegion {
+      pub base: u32,
+      pub size: u32,
+      pub flags: PageFlags,
+      pub name: &'static str,
+  }
+  ```
+</ResponseField>
+
+### SharedMemoryRegion
+
+<ResponseField name="SharedMemoryRegion" type="struct">
+  Shared memory region between PPU and SPU
+  
+  ```rust
+  pub struct SharedMemoryRegion {
+      pub id: u32,
+      pub main_addr: u32,
+      pub size: u32,
+      pub flags: PageFlags,
+      pub spu_access: Vec<u32>,
+      pub ppu_access: bool,
+      pub ref_count: u32,
+  }
+  ```
+</ResponseField>
+
+### RsxMemoryMapping
+
+<ResponseField name="RsxMemoryMapping" type="struct">
+  RSX memory mapping entry
+  
+  ```rust
+  pub struct RsxMemoryMapping {
+      pub rsx_offset: u32,
+      pub main_addr: u32,
+      pub size: u32,
+      pub tiled: bool,
+      pub tile_pitch: u32,
+  }
+  ```
+</ResponseField>
+
+## Page flags
+
+<ResponseField name="PageFlags" type="bitflags">
+  Memory page protection flags
+  
+  ```rust
+  bitflags! {
+      pub struct PageFlags: u8 {
+          const READ    = 0b0001;  // Readable
+          const WRITE   = 0b0010;  // Writable
+          const EXECUTE = 0b0100;  // Executable
+          const MMIO    = 0b1000;  // Memory-mapped I/O
+      }
+  }
+  
+  // Common combinations
+  const RW  = READ | WRITE;
+  const RX  = READ | EXECUTE;
+  const RWX = READ | WRITE | EXECUTE;
+  ```
+</ResponseField>
+
+## Reservation
+
+Reservation system for atomic operations (load-link/store-conditional).
+
+<ResponseField name="Reservation" type="struct">
+  Memory reservation for a cache line
+  
+  ```rust
+  impl Reservation {
+      pub fn acquire(&self, thread_id: u32);
+      pub fn release(&self);
+      pub fn check(&self, thread_id: u32) -> bool;
+      pub fn invalidate(&self);
+  }
+  ```
+</ResponseField>
+
+## Debug utilities
+
+### Watchpoints
+
+<ParamField path="add_watchpoint" type="fn(&self, addr: u32, size: u32, condition: WatchpointCondition) -> Result<u32, MemoryError>">
+  Adds a memory watchpoint for debugging.
+  
+  ```rust
+  use oc_memory::{WatchpointCondition, WatchpointType};
+  
+  let wp_id = memory.add_watchpoint(
+      0x10000,
+      4,
+      WatchpointCondition::new(WatchpointType::Write),
+  )?;
+  ```
+</ParamField>
+
+<ParamField path="remove_watchpoint" type="fn(&self, id: u32) -> Result<(), MemoryError>">
+  Removes a watchpoint.
+</ParamField>
+
+### Cache simulation
+
+<ResponseField name="CacheSimulator" type="struct">
+  Simulates CPU cache behavior for debugging
+  
+  ```rust
+  pub struct CacheSimulator {
+      pub mode: CacheMode,
+      pub stats: CacheStats,
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="CacheMode" type="enum">
+  - `Off` - No cache simulation
+  - `WriteThrough` - Write-through cache
+  - `WriteBack` - Write-back cache
+</ResponseField>
+
+<ResponseField name="CacheStats" type="struct">
+  Cache statistics
+  
+  ```rust
+  pub struct CacheStats {
+      pub hits: u64,
+      pub misses: u64,
+      pub writebacks: u64,
+      pub invalidations: u64,
+  }
+  ```
+</ResponseField>
+
+### Memory profiling
+
+<ResponseField name="MemoryProfiler" type="struct">
+  Profiles memory access patterns
+  
+  ```rust
+  pub struct MemoryProfiler {
+      pub read_count: u64,
+      pub write_count: u64,
+      pub read_bytes: u64,
+      pub write_bytes: u64,
+      pub hot_addresses: HashMap<u32, u64>,
+  }
+  ```
+</ResponseField>
+
+### Self-modifying code detection
+
+<ResponseField name="SmcDetector" type="struct">
+  Detects self-modifying code
+  
+  When enabled, tracks writes to executable pages and invalidates JIT code.
+</ResponseField>
+
+## Error types
+
+<ResponseField name="MemoryError" type="enum">
+  - `OutOfMemory` - Out of memory
+  - `InvalidAddress(u32)` - Invalid memory address
+  - `AccessViolation { addr: u32, kind: AccessKind }` - Access violation
+  - `ReservationConflict(u32)` - Reservation conflict
+  - `AlignmentError { addr: u32, align: u32 }` - Alignment error
+  - `WatchpointHit { addr: u32, kind: AccessKind }` - Watchpoint hit
+  - `SelfModifyingCode(u32)` - Self-modifying code detected
+</ResponseField>
+
+## Constants
+
+Memory layout constants are defined in the `constants` module:
+
+<ResponseField name="MAIN_MEM_BASE" type="u32">
+  Main memory base: 0x0000_0000
+</ResponseField>
+
+<ResponseField name="MAIN_MEM_SIZE" type="u32">
+  Main memory size: 256 MB
+</ResponseField>
+
+<ResponseField name="USER_MEM_BASE" type="u32">
+  User memory base: 0x1000_0000
+</ResponseField>
+
+<ResponseField name="USER_MEM_SIZE" type="u32">
+  User memory size: ~224 MB
+</ResponseField>
+
+<ResponseField name="RSX_IO_BASE" type="u32">
+  RSX I/O base: 0x2800_0000
+</ResponseField>
+
+<ResponseField name="STACK_BASE" type="u32">
+  Stack base: 0xD000_0000
+</ResponseField>
+
+<ResponseField name="PAGE_SIZE" type="u32">
+  Page size: 4096 bytes (4 KB)
+</ResponseField>
+
+<ResponseField name="RESERVATION_GRANULARITY" type="u32">
+  Reservation granularity: 128 bytes (cache line size)
+</ResponseField>

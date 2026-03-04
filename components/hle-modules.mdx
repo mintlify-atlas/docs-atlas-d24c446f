@@ -1,0 +1,394 @@
+---
+title: HLE modules
+description: High-level emulation of PS3 system libraries
+---
+
+Oxidized-cell provides high-level emulation (HLE) of PS3 system libraries, allowing games to call PS3 APIs without requiring the actual PS3 firmware libraries in memory.
+
+## Overview
+
+The HLE component (`oc-hle`) implements:
+
+- **Module registry**: Registration and lookup of HLE modules
+- **Function dispatch**: Route game calls to HLE implementations
+- **Memory utilities**: Read/write guest memory safely
+- **Context management**: Track HLE subsystem state
+
+```rust
+pub use module::ModuleRegistry;
+pub use dispatcher::{HleDispatcher, HleCallContext, HleFunctionInfo};
+pub use context::{HleContext, get_hle_context, set_rsx_bridge};
+pub use memory::{read_be32, write_be32, read_string};
+```
+
+## Module categories
+
+HLE modules are organized by function:
+
+### Graphics modules
+
+<Accordion title="cellGcmSys - Graphics command management">
+Core graphics API for RSX interaction:
+- `cellGcmInit` - Initialize graphics system
+- `cellGcmSetFlipMode` - Set flip mode (vsync)
+- `cellGcmSetDisplayBuffer` - Register display buffer
+- `cellGcmGetCurrentField` - Get current field (interlaced)
+- `cellGcmMapMainMemory` - Map main memory for GPU
+- `cellGcmAddressToOffset` - Convert address to GPU offset
+</Accordion>
+
+<Accordion title="Image decoders">
+- **cellGifDec** - GIF image decoding
+- **cellPngDec** - PNG image decoding
+- **cellJpgDec** - JPEG image decoding
+</Accordion>
+
+<Accordion title="cellResc - Resolution scaling">
+Resolution scaling and upscaling:
+- `cellRescInit` - Initialize scaler
+- `cellRescSetDisplayMode` - Set output resolution
+- `cellRescAdjustAspectRatio` - Adjust aspect ratio
+</Accordion>
+
+### System modules
+
+<Accordion title="cellSysutil - System utilities">
+System events and callbacks:
+- `cellSysutilRegisterCallback` - Register event callback
+- `cellSysutilCheckCallback` - Check for pending events
+- `cellSysutilGetSystemParamInt` - Get system parameter (int)
+- `cellSysutilGetSystemParamString` - Get system parameter (string)
+</Accordion>
+
+<Accordion title="cellGame - Game info">
+Game metadata and directory access:
+- `cellGameBootCheck` - Check boot type (disc/HDD)
+- `cellGameContentPermit` - Get content permission
+- `cellGameGetParamString` - Get PARAM.SFO string
+- `cellGameGetParamInt` - Get PARAM.SFO int
+</Accordion>
+
+<Accordion title="cellSaveData - Save data management">
+Save data operations:
+- `cellSaveDataListSave` - List saved games
+- `cellSaveDataListLoad` - Load save list
+- `cellSaveDataFixedSave` - Save to fixed slot
+- `cellSaveDataFixedLoad` - Load from fixed slot
+</Accordion>
+
+### Multimedia modules
+
+<Accordion title="cellDmux - Demuxer">
+Audio/video stream demuxing:
+- `cellDmuxOpen` - Open demuxer
+- `cellDmuxSetStream` - Set input stream
+- `cellDmuxGetAu` - Get access unit (frame)
+- `cellDmuxClose` - Close demuxer
+</Accordion>
+
+<Accordion title="cellVdec - Video decoder">
+Video decoding (H.264, MPEG-2):
+- `cellVdecOpen` - Open decoder
+- `cellVdecStartSeq` - Start sequence
+- `cellVdecDecodeAu` - Decode access unit
+- `cellVdecGetPicture` - Get decoded picture
+- `cellVdecClose` - Close decoder
+</Accordion>
+
+<Accordion title="cellAdec - Audio decoder">
+Audio decoding (AAC, MP3, AC3):
+- `cellAdecOpen` - Open decoder
+- `cellAdecStartSeq` - Start sequence
+- `cellAdecDecodeAu` - Decode access unit
+- `cellAdecGetPcm` - Get PCM audio
+- `cellAdecClose` - Close decoder
+</Accordion>
+
+### Network modules
+
+<Accordion title="cellNetCtl - Network control">
+Network status and control:
+- `cellNetCtlInit` - Initialize network
+- `cellNetCtlGetInfo` - Get network info
+- `cellNetCtlGetState` - Get connection state
+</Accordion>
+
+<Accordion title="cellHttp - HTTP client">
+HTTP requests:
+- `cellHttpInit` - Initialize HTTP client
+- `cellHttpCreateTransaction` - Create HTTP transaction
+- `cellHttpSendRequest` - Send HTTP request
+- `cellHttpGetStatusCode` - Get response code
+</Accordion>
+
+### Input modules
+
+<Accordion title="cellPad - Controller input">
+DualShock 3 controller:
+- `cellPadInit` - Initialize pad system
+- `cellPadGetData` - Get controller data
+- `cellPadSetActDirect` - Set vibration
+- `cellPadGetInfo` - Get pad info
+</Accordion>
+
+<Accordion title="Other input">
+- **cellKb** - Keyboard input
+- **cellMouse** - Mouse input
+- **cellMic** - Microphone input
+</Accordion>
+
+### Utility modules
+
+<Accordion title="cellSpurs - Task scheduler">
+SPU workload scheduler:
+- `cellSpursInitialize` - Initialize SPURS
+- `cellSpursCreateTask` - Create task
+- `cellSpursRunTask` - Run task on SPU
+- `cellSpursWaitForAllTaskExit` - Wait for tasks
+</Accordion>
+
+<Accordion title="cellFont - Font rendering">
+Font loading and rendering:
+- `cellFontInit` - Initialize font system
+- `cellFontOpenFontset` - Open font set
+- `cellFontRenderCharGlyph` - Render character
+</Accordion>
+
+## Module registry
+
+The `ModuleRegistry` manages HLE modules:
+
+```rust
+use oc_hle::ModuleRegistry;
+
+let mut registry = ModuleRegistry::new();
+
+// Register all built-in modules
+registry.register_all();
+
+// Look up function by NID
+let func_info = registry.lookup_function(
+    module_name,
+    nid,
+)?;
+
+// Get module info
+let module_info = registry.get_module(module_name)?;
+```
+
+### Module structure
+
+<Accordion title="Module components">
+- **Name**: Module identifier (e.g., "cellGcmSys")
+- **Version**: Module version
+- **Functions**: List of exported functions
+- **Variables**: List of exported variables
+- **Dependencies**: Required modules
+</Accordion>
+
+## Function dispatch
+
+The `HleDispatcher` routes game calls to HLE implementations:
+
+```rust
+use oc_hle::{HleDispatcher, dispatch_hle_call};
+
+// Initialize dispatcher
+let dispatcher = HleDispatcher::new();
+
+// Dispatch function call
+let result = dispatch_hle_call(
+    module_name,
+    nid,
+    &mut ppu_thread,
+)?;
+```
+
+### Call context
+
+The `HleCallContext` provides access to:
+
+```rust
+pub struct HleCallContext<'a> {
+    pub thread: &'a mut PpuThread,
+    pub memory: Arc<MemoryManager>,
+    pub rsx_bridge: Option<RsxBridgeSender>,
+    pub spu_bridge: Option<SpuBridgeSender>,
+}
+```
+
+## Memory utilities
+
+HLE functions use memory utilities to access guest memory:
+
+<Tabs>
+  <Tab title="Read">
+    ```rust
+    use oc_hle::{read_be32, read_be64, read_string};
+    
+    // Read 32-bit big-endian value
+    let value = read_be32(addr)?;
+    
+    // Read 64-bit big-endian value
+    let value64 = read_be64(addr)?;
+    
+    // Read null-terminated string
+    let text = read_string(addr)?;
+    ```
+  </Tab>
+  <Tab title="Write">
+    ```rust
+    use oc_hle::{write_be32, write_be64, write_string};
+    
+    // Write 32-bit big-endian value
+    write_be32(addr, value)?;
+    
+    // Write 64-bit big-endian value
+    write_be64(addr, value64)?;
+    
+    // Write null-terminated string
+    write_string(addr, "Hello")?;
+    ```
+  </Tab>
+  <Tab title="Check">
+    ```rust
+    use oc_hle::{is_valid_pointer, is_readable, is_writable};
+    
+    // Check if pointer is valid
+    if is_valid_pointer(addr) {
+        // Safe to access
+    }
+    
+    // Check read permission
+    if is_readable(addr, size) {
+        // Can read
+    }
+    
+    // Check write permission
+    if is_writable(addr, size) {
+        // Can write
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Always validate guest pointers before dereferencing to prevent crashes.
+</Warning>
+
+## NID system
+
+PS3 uses Name IDs (NIDs) to identify functions:
+
+```rust
+// Function NID (SHA-1 hash of name)
+const CELL_GCM_INIT: u32 = 0x15BAE46B;
+const CELL_GCM_SET_FLIP_MODE: u32 = 0xB2E761D4;
+```
+
+NIDs are 32-bit hashes derived from function names, allowing symbol resolution without strings.
+
+## Implementation example
+
+Example HLE function implementation:
+
+```rust
+// cellGcmInit implementation
+fn cell_gcm_init(
+    ctx: &mut HleCallContext,
+) -> Result<i32, HleError> {
+    // Read arguments from registers
+    let io_address = ctx.thread.gpr[3];
+    let io_size = ctx.thread.gpr[4];
+    let control_addr = ctx.thread.gpr[5];
+    let label_addr = ctx.thread.gpr[6];
+    
+    // Initialize graphics system
+    let gcm_ctx = initialize_gcm(
+        io_address,
+        io_size,
+        control_addr,
+        label_addr,
+    )?;
+    
+    // Send command to RSX
+    if let Some(ref mut bridge) = ctx.rsx_bridge {
+        bridge.send(BridgeCommand::Init(gcm_ctx))?;
+    }
+    
+    // Return success (0)
+    Ok(0)
+}
+```
+
+## Implementation status
+
+<CardGroup cols={3}>
+  <Card title="Graphics" icon="display">
+    cellGcmSys: 85%
+    cellResc: 60%
+    Image decoders: 70%
+  </Card>
+  <Card title="System" icon="gear">
+    cellSysutil: 80%
+    cellGame: 75%
+    cellSaveData: 65%
+  </Card>
+  <Card title="Multimedia" icon="film">
+    cellDmux: 50%
+    cellVdec: 45%
+    cellAdec: 45%
+  </Card>
+  <Card title="Network" icon="wifi">
+    cellNetCtl: 40%
+    cellHttp: 35%
+    cellSsl: 30%
+  </Card>
+  <Card title="Input" icon="gamepad">
+    cellPad: 85%
+    cellKb: 70%
+    cellMouse: 70%
+  </Card>
+  <Card title="Utility" icon="wrench">
+    cellSpurs: 55%
+    cellFont: 60%
+    libsre: 40%
+  </Card>
+</CardGroup>
+
+<Info>
+Implementation percentages reflect function coverage. Most common functions are implemented.
+</Info>
+
+## Adding custom modules
+
+You can register custom HLE modules:
+
+```rust
+use oc_hle::{ModuleRegistry, HleFunctionInfo};
+
+let mut registry = ModuleRegistry::new();
+
+// Register custom module
+registry.register_module(
+    "myModule",
+    vec![
+        HleFunctionInfo {
+            name: "myFunction",
+            nid: 0x12345678,
+            handler: my_function_handler,
+        },
+    ],
+)?;
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="HLE API" icon="code" href="/api/hle">
+    HLE API reference
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+    Implement new HLE functions
+  </Card>
+</CardGroup>

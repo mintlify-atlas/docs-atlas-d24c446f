@@ -1,0 +1,634 @@
+---
+title: Contributing guidelines
+description: How to contribute to the oxidized-cell PS3 emulator project
+---
+
+## Welcome
+
+Thank you for your interest in contributing to oxidized-cell! This guide will help you get started with contributing code, documentation, testing, and more.
+
+<Note>
+oxidized-cell is an early-stage project under active development. Many features are still being implemented, making this an excellent time to contribute.
+</Note>
+
+## Ways to contribute
+
+<CardGroup cols={2}>
+  <Card title="Code contributions" icon="code">
+    Implement features, fix bugs, optimize performance
+  </Card>
+  <Card title="Testing" icon="flask">
+    Test games, report bugs, write unit tests
+  </Card>
+  <Card title="Documentation" icon="book">
+    Improve docs, write tutorials, add examples
+  </Card>
+  <Card title="Research" icon="magnifying-glass">
+    Document PS3 hardware, reverse engineer games
+  </Card>
+</CardGroup>
+
+## Getting started
+
+<Steps>
+  <Step title="Set up development environment">
+    Follow the [building from source](/dev/building) guide to set up your development environment.
+
+    ```bash
+    git clone https://github.com/darkace1998/oxidized-cell.git
+    cd oxidized-cell
+    cargo build
+    ```
+  </Step>
+  <Step title="Familiarize with the codebase">
+    Read the [project structure](/dev/project-structure) documentation to understand the architecture.
+
+    Explore key crates:
+    - `oc-core` - Core infrastructure
+    - `oc-ppu` / `oc-spu` - CPU emulation
+    - `oc-rsx` - Graphics
+    - `oc-hle` - High-level emulation
+  </Step>
+  <Step title="Run tests">
+    Ensure everything works:
+
+    ```bash
+    cargo test
+    ```
+
+    Run the emulator:
+
+    ```bash
+    cargo run --release
+    ```
+  </Step>
+  <Step title="Pick a task">
+    Check the [high-priority tasks](#high-priority-tasks) section or browse open issues on GitHub.
+  </Step>
+</Steps>
+
+## High-priority tasks
+
+These areas need the most help:
+
+### 1. HLE module implementation
+
+<AccordionGroup>
+  <Accordion title="cellGcmSys - Graphics management">
+    **Status:** Partially implemented
+
+    **Needed:**
+    - Additional method handlers
+    - Texture upload optimization
+    - Vertex buffer management
+    - ZCULL occlusion queries
+
+    **Files:** `crates/oc-hle/src/cellGcmSys.rs`
+  </Accordion>
+
+  <Accordion title="cellSysutil - System utilities">
+    **Status:** Basic implementation
+
+    **Needed:**
+    - Save data management
+    - Trophy support
+    - System dialogs
+    - Background download
+
+    **Files:** `crates/oc-hle/src/cellSysutil.rs`
+  </Accordion>
+
+  <Accordion title="cellSpurs - SPU runtime">
+    **Status:** Minimal implementation
+
+    **Needed:**
+    - Job queue system
+    - Task scheduling
+    - SPU thread group management
+    - Work stealing
+
+    **Files:** `crates/oc-hle/src/cellSpurs.rs`
+  </Accordion>
+
+  <Accordion title="cellPad - Controller input">
+    **Status:** Basic implementation
+
+    **Needed:**
+    - Pressure-sensitive buttons
+    - Motion sensors (SIXAXIS)
+    - Multi-controller support
+    - Vibration feedback
+
+    **Files:** `crates/oc-hle/src/cellPad.rs`
+  </Accordion>
+
+  <Accordion title="cellFs - Filesystem operations">
+    **Status:** Basic implementation
+
+    **Needed:**
+    - Async I/O operations
+    - Directory enumeration
+    - File attribute handling
+    - HDD0/dev_flash mounting
+
+    **Files:** `crates/oc-hle/src/cellFs.rs`
+  </Accordion>
+</AccordionGroup>
+
+### 2. Game compatibility
+
+**Goal:** Get homebrew and commercial games running.
+
+**Tasks:**
+- Test PS3 homebrew applications
+- Implement missing syscalls
+- Fix game-specific issues
+- Document compatibility status
+
+**Resources:**
+- [PS3 Homebrew Archive](https://store.brewology.com/)
+- Check `todo.md` for known issues
+
+### 3. Performance optimization
+
+**Areas for improvement:**
+- JIT compiler optimization (PPU/SPU)
+- Memory access patterns
+- RSX command buffer processing
+- Multi-threaded SPU execution
+
+### 4. Testing and validation
+
+**Needed:**
+- Expand test coverage (currently 200+ tests)
+- Add benchmark suite
+- Create test ROMs for specific features
+- Automated regression testing
+
+## Development workflow
+
+<Steps>
+  <Step title="Fork the repository">
+    Click "Fork" on the [GitHub repository](https://github.com/darkace1998/oxidized-cell).
+
+    Clone your fork:
+    ```bash
+    git clone https://github.com/YOUR_USERNAME/oxidized-cell.git
+    cd oxidized-cell
+    git remote add upstream https://github.com/darkace1998/oxidized-cell.git
+    ```
+  </Step>
+
+  <Step title="Create a feature branch">
+    ```bash
+    git checkout -b feature/my-feature
+    ```
+
+    Branch naming conventions:
+    - `feature/` - New features
+    - `fix/` - Bug fixes
+    - `refactor/` - Code refactoring
+    - `docs/` - Documentation updates
+    - `test/` - Test additions/improvements
+  </Step>
+
+  <Step title="Make your changes">
+    Edit code, add tests, update documentation.
+
+    **Before committing:**
+    - Format code: `cargo fmt`
+    - Run linter: `cargo clippy`
+    - Run tests: `cargo test`
+    - Test affected crates: `cargo test -p oc-<crate>`
+  </Step>
+
+  <Step title="Commit your changes">
+    Write clear commit messages:
+
+    ```bash
+    git add .
+    git commit -m "Add cellGcmSetFlipMode HLE implementation
+
+    - Implement flip mode syscall handler
+    - Add vertical blank synchronization
+    - Update tests for display buffer swapping"
+    ```
+
+    Follow [Conventional Commits](https://www.conventionalcommits.org/):
+    - `feat:` - New feature
+    - `fix:` - Bug fix
+    - `docs:` - Documentation
+    - `test:` - Tests
+    - `refactor:` - Code refactoring
+    - `perf:` - Performance improvement
+  </Step>
+
+  <Step title="Push and create pull request">
+    ```bash
+    git push origin feature/my-feature
+    ```
+
+    Open a pull request on GitHub with:
+    - Clear title describing the change
+    - Detailed description of what and why
+    - Screenshots/videos for UI changes
+    - Reference related issues: "Fixes #123"
+  </Step>
+</Steps>
+
+## Code style guidelines
+
+### Rust
+
+<Tabs>
+  <Tab title="Formatting">
+    **Use `rustfmt`:**
+    ```bash
+    cargo fmt
+    ```
+
+    **Key conventions:**
+    - 4-space indentation
+    - 100-character line limit
+    - Use trailing commas
+    - Import organization: std → external → internal
+  </Tab>
+
+  <Tab title="Linting">
+    **Run `clippy`:**
+    ```bash
+    cargo clippy -- -D warnings
+    ```
+
+    **Address all warnings** before submitting PR.
+
+    **Common issues:**
+    - Unnecessary clones
+    - Unused imports
+    - Inefficient algorithms
+    - Missing error handling
+  </Tab>
+
+  <Tab title="Naming">
+    - `snake_case` for functions, variables, modules
+    - `PascalCase` for types, traits, enums
+    - `SCREAMING_SNAKE_CASE` for constants
+    - Use descriptive names (avoid `x`, `tmp`)
+  </Tab>
+
+  <Tab title="Error handling">
+    **Use `Result` and `?` operator:**
+    ```rust
+    fn load_game(path: &Path) -> Result<Game, LoadError> {
+        let file = File::open(path)?;
+        let elf = parse_elf(&file)?;
+        Ok(Game::from_elf(elf))
+    }
+    ```
+
+    **Define custom error types:**
+    ```rust
+    use thiserror::Error;
+
+    #[derive(Error, Debug)]
+    pub enum EmulatorError {
+        #[error("Invalid memory address: {0:#x}")]
+        InvalidAddress(u32),
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### C++
+
+<Tabs>
+  <Tab title="Formatting">
+    **Use `clang-format`:**
+    ```bash
+    clang-format -i cpp/src/*.cpp
+    ```
+
+    **Settings:**
+    - LLVM style
+    - 4-space indentation
+    - 120-character line limit
+  </Tab>
+
+  <Tab title="Standards">
+    - **C++20** standard
+    - Use modern features: `std::span`, concepts, ranges
+    - Prefer `auto` for type inference
+    - Use `constexpr` where possible
+  </Tab>
+
+  <Tab title="LLVM API">
+    **Follow LLVM conventions:**
+    ```cpp
+    llvm::Function* create_ppu_function(llvm::Module& M) {
+        auto& Context = M.getContext();
+        auto* FuncType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(Context), {}, false);
+        return llvm::Function::Create(
+            FuncType, llvm::Function::ExternalLinkage, "ppu_func", M);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Documentation
+
+**Rust documentation:**
+```rust
+/// Executes a single PPU instruction.
+///
+/// # Arguments
+/// * `instr` - The 32-bit instruction word
+///
+/// # Returns
+/// `Ok(())` if successful, or an error if the instruction is invalid.
+///
+/// # Example
+/// ```
+/// let ppu = Ppu::new();
+/// ppu.execute(0x38600001)?; // li r3, 1
+/// ```
+pub fn execute(&mut self, instr: u32) -> Result<()> {
+    // ...
+}
+```
+
+**Generate docs:**
+```bash
+cargo doc --open
+```
+
+## Testing guidelines
+
+### Writing tests
+
+<Tabs>
+  <Tab title="Unit tests">
+    **Test individual functions:**
+    ```rust
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_ppu_li_instruction() {
+            let mut ppu = Ppu::new();
+            ppu.execute(0x38600042).unwrap(); // li r3, 0x42
+            assert_eq!(ppu.gpr[3], 0x42);
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Integration tests">
+    **Test component interaction:**
+    ```rust
+    // crates/oc-integration/tests/game_loading.rs
+    #[test]
+    fn test_load_and_run_elf() {
+        let mut emu = Emulator::new();
+        emu.load_elf("test.elf").unwrap();
+        emu.run_until_halt();
+        assert_eq!(emu.exit_code(), 0);
+    }
+    ```
+  </Tab>
+
+  <Tab title="Property testing">
+    **Test with random inputs:**
+    ```rust
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn test_memory_access(addr in 0u32..0x1000_0000) {
+            let mut mem = Memory::new();
+            mem.write32(addr, 0xDEADBEEF).unwrap();
+            prop_assert_eq!(mem.read32(addr).unwrap(), 0xDEADBEEF);
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Benchmarks">
+    **Measure performance:**
+    ```rust
+    use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+    fn benchmark_ppu_execution(c: &mut Criterion) {
+        c.bench_function("ppu execute 1000 instructions", |b| {
+            let mut ppu = Ppu::new();
+            b.iter(|| {
+                for _ in 0..1000 {
+                    ppu.execute(black_box(0x60000000)).unwrap(); // nop
+                }
+            });
+        });
+    }
+
+    criterion_group!(benches, benchmark_ppu_execution);
+    criterion_main!(benches);
+    ```
+
+    Run benchmarks:
+    ```bash
+    cargo bench
+    ```
+  </Tab>
+</Tabs>
+
+### Running tests
+
+```bash
+# All tests
+cargo test
+
+# Specific crate
+cargo test -p oc-memory
+
+# Specific test
+cargo test test_ppu_li_instruction
+
+# With output
+cargo test -- --nocapture
+
+# Parallel execution control
+cargo test -p oc-hle -- --test-threads=1
+```
+
+## Pull request checklist
+
+Before submitting, ensure:
+
+<Tabs>
+  <Tab title="Code quality">
+    - [ ] Code follows Rust/C++ style guidelines
+    - [ ] `cargo fmt` and `cargo clippy` pass
+    - [ ] No compiler warnings
+    - [ ] Public APIs are documented
+    - [ ] Complex logic has comments
+  </Tab>
+
+  <Tab title="Testing">
+    - [ ] All existing tests pass: `cargo test`
+    - [ ] New features have tests
+    - [ ] Bug fixes have regression tests
+    - [ ] Edge cases are covered
+  </Tab>
+
+  <Tab title="Documentation">
+    - [ ] README updated if needed
+    - [ ] Relevant docs updated
+    - [ ] API changes documented
+    - [ ] Examples added for new features
+  </Tab>
+
+  <Tab title="Git history">
+    - [ ] Commits are logical and atomic
+    - [ ] Commit messages are clear
+    - [ ] No merge commits (rebase instead)
+    - [ ] Branch is up-to-date with main
+  </Tab>
+</Tabs>
+
+## Syncing with upstream
+
+Keep your fork updated:
+
+```bash
+# Fetch upstream changes
+git fetch upstream
+
+# Update main branch
+git checkout main
+git merge upstream/main
+git push origin main
+
+# Rebase feature branch
+git checkout feature/my-feature
+git rebase main
+```
+
+## Communication
+
+<CardGroup cols={2}>
+  <Card title="GitHub Issues" icon="github">
+    Report bugs, request features, ask questions
+  </Card>
+  <Card title="Pull Requests" icon="code-pull-request">
+    Submit code changes, get feedback
+  </Card>
+</CardGroup>
+
+### Reporting bugs
+
+**Include:**
+- Operating system and version
+- Rust/LLVM versions: `rustc --version`, `llvm-config --version`
+- Steps to reproduce
+- Expected vs actual behavior
+- Error messages and logs
+- Minimal reproduction case if possible
+
+**Example:**
+```
+Title: PPU crashes on vmaddfp instruction
+
+Environment:
+- OS: Ubuntu 22.04
+- Rust: 1.80.0
+- LLVM: 14.0.0
+
+Steps:
+1. Load test.elf
+2. Execute until PC = 0x01000420
+3. Crash occurs on vmaddfp instruction
+
+Expected: Instruction executes correctly
+Actual: Panic with "invalid SIMD operation"
+
+Logs:
+[ERROR] oc_ppu: Invalid vmaddfp operands
+```
+
+## Project-specific conventions
+
+### Memory addresses
+
+Use hexadecimal with `0x` prefix:
+```rust
+const MAIN_MEMORY_BASE: u32 = 0x0001_0000;
+const STACK_TOP: u32 = 0x3000_0000;
+```
+
+### Logging
+
+Use `tracing` crate:
+```rust
+use tracing::{info, warn, error, debug, trace};
+
+info!("Loading game: {}", path.display());
+warn!(addr = %addr, "Unaligned memory access");
+error!(err = %e, "Failed to initialize Vulkan");
+debug!(gpr = ?ppu.gpr, "PPU register dump");
+trace!(instr = %instr, "Executing instruction");
+```
+
+### Error messages
+
+Be specific and actionable:
+```rust
+// Bad
+return Err("Invalid address".into());
+
+// Good
+return Err(format!(
+    "Invalid memory address {:#x}: outside valid range {:#x}-{:#x}",
+    addr, MIN_ADDR, MAX_ADDR
+));
+```
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="PS3 Developer Wiki" icon="book" href="https://www.psdevwiki.com/">
+    Hardware documentation and specifications
+  </Card>
+  <Card title="Cell BE Handbook" icon="file-pdf" href="https://www.ibm.com/support/pages/cell-be-programming-handbook">
+    IBM's official Cell programming guide
+  </Card>
+  <Card title="RPCS3" icon="code" href="https://github.com/RPCS3/rpcs3">
+    Reference PS3 emulator implementation
+  </Card>
+  <Card title="Rust Book" icon="rust" href="https://doc.rust-lang.org/book/">
+    Learn Rust programming
+  </Card>
+</CardGroup>
+
+## Recognition
+
+Contributors are listed in:
+- GitHub contributors page
+- Project README acknowledgments
+- Release notes
+
+Significant contributions may result in:
+- Collaborator access
+- Mention in blog posts/announcements
+- Featured in project showcase
+
+## License
+
+By contributing to oxidized-cell, you agree that your contributions will be licensed under the **GPL-3.0 License**.
+
+Ensure you have the right to contribute code (not copied from proprietary sources).
+
+## Questions?
+
+Not sure where to start? Open an issue with the "question" label or comment on an existing issue you'd like to work on.
+
+Welcome to the oxidized-cell community!

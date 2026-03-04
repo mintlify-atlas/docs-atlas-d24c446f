@@ -1,0 +1,398 @@
+---
+title: Input handling
+description: Controller, keyboard, and mouse emulation with customizable mappings
+---
+
+The input system emulates PS3 input devices including DualShock 3 controllers, keyboards, mice, PlayStation Move controllers, and specialty peripherals like Guitar Hero instruments.
+
+## Overview
+
+The input component (`oc-input`) implements:
+
+- **DualShock 3**: Sixaxis motion, analog sticks, buttons, vibration
+- **PlayStation Move**: Motion controller with sphere tracking
+- **Keyboard**: Full keyboard support
+- **Mouse**: Mouse input and pointer
+- **USB controllers**: Third-party USB gamepads
+- **Bluetooth**: Wireless controller support
+- **Instruments**: Guitar Hero/Rock Band peripherals
+- **Camera**: PlayStation Eye camera
+- **Microphone**: Audio input
+
+```rust
+pub use pad::Pad;
+pub use dualshock3::{DualShock3, SixaxisData, VibrationState};
+pub use move_controller::{MoveController, MoveMotionData};
+pub use keyboard::Keyboard;
+pub use mouse::Mouse;
+```
+
+## Architecture
+
+The input system is organized into:
+
+- **pad**: Generic gamepad abstraction
+- **dualshock3**: DualShock 3 controller
+- **move_controller**: PlayStation Move
+- **keyboard**: Keyboard input
+- **mouse**: Mouse input
+- **usb**: USB controller support
+- **bluetooth**: Bluetooth pairing and communication
+- **instruments**: Music game peripherals
+- **camera**: PlayStation Eye
+- **microphone**: Microphone input
+- **mapping**: Input mapping and configuration
+
+## DualShock 3
+
+The `DualShock3` struct represents a PS3 controller:
+
+```rust
+use oc_input::DualShock3;
+
+let mut controller = DualShock3::new(port);
+
+// Read button state
+if controller.button_pressed(Button::Cross) {
+    // Cross button pressed
+}
+
+// Read analog stick
+let (left_x, left_y) = controller.left_stick();
+
+// Read trigger
+let r2_pressure = controller.trigger(Trigger::R2);
+
+// Set vibration
+controller.set_vibration(
+    small_motor,  // 0-255
+    large_motor,  // 0-255
+)?;
+```
+
+### Button layout
+
+<Tabs>
+  <Tab title="Face buttons">
+    - Cross (×)
+    - Circle (○)
+    - Square (□)
+    - Triangle (△)
+  </Tab>
+  <Tab title="Shoulder buttons">
+    - L1, L2, L3
+    - R1, R2, R3
+  </Tab>
+  <Tab title="D-pad">
+    - Up, Down, Left, Right
+  </Tab>
+  <Tab title="System buttons">
+    - Select, Start, PS button
+  </Tab>
+</Tabs>
+
+### Sixaxis motion
+
+DualShock 3 includes motion sensing:
+
+```rust
+use oc_input::SixaxisData;
+
+let motion = controller.sixaxis_data();
+
+// Accelerometer (G-force)
+let accel_x = motion.accel_x;  // -4.0 to 4.0 G
+let accel_y = motion.accel_y;
+let accel_z = motion.accel_z;
+
+// Gyroscope (degrees/sec)
+let gyro_x = motion.gyro_x;  // Roll
+let gyro_y = motion.gyro_y;  // Pitch
+let gyro_z = motion.gyro_z;  // Yaw
+```
+
+<Note>
+Sixaxis motion data is available when the controller is moved or tilted.
+</Note>
+
+## PlayStation Move
+
+The `MoveController` represents a Move motion controller:
+
+```rust
+use oc_input::MoveController;
+
+let mut move_ctrl = MoveController::new(port);
+
+// Read button state
+if move_ctrl.trigger_pressed() {
+    // Trigger pressed
+}
+
+// Read motion data
+let motion = move_ctrl.motion_data();
+let accel = (motion.accel_x, motion.accel_y, motion.accel_z);
+
+// Set sphere color (for tracking)
+move_ctrl.set_sphere_color(255, 0, 0)?;  // Red
+```
+
+### Move buttons
+
+- Move button
+- Trigger
+- Square, Triangle, Circle, Cross
+- Select, Start, PS button
+
+## Keyboard
+
+The `Keyboard` struct provides keyboard input:
+
+```rust
+use oc_input::Keyboard;
+
+let mut keyboard = Keyboard::new();
+
+// Check key state
+if keyboard.key_pressed(Key::Enter) {
+    // Enter key pressed
+}
+
+// Get character input
+if let Some(ch) = keyboard.get_char() {
+    // Character typed
+}
+```
+
+### Key codes
+
+Keyboard uses standard key codes:
+
+```rust
+use oc_input::Key;
+
+Key::A, Key::B, ..., Key::Z
+Key::F1, Key::F2, ..., Key::F12
+Key::Enter, Key::Escape, Key::Space
+Key::LeftShift, Key::RightShift
+Key::LeftControl, Key::RightControl
+```
+
+## Mouse
+
+The `Mouse` struct provides mouse input:
+
+```rust
+use oc_input::Mouse;
+
+let mut mouse = Mouse::new();
+
+// Read position
+let (x, y) = mouse.position();
+
+// Read buttons
+if mouse.button_pressed(MouseButton::Left) {
+    // Left click
+}
+
+// Read scroll wheel
+let scroll_delta = mouse.scroll_delta();
+```
+
+## Input mapping
+
+Map keyboard/mouse to controller:
+
+```rust
+use oc_input::mapping::InputMapping;
+
+let mut mapping = InputMapping::new();
+
+// Map keyboard keys to buttons
+mapping.map_key(Key::Space, Button::Cross);
+mapping.map_key(Key::W, Button::Up);
+mapping.map_key(Key::A, Button::Left);
+mapping.map_key(Key::S, Button::Down);
+mapping.map_key(Key::D, Button::Right);
+
+// Map mouse to right stick
+mapping.map_mouse_to_stick(
+    MouseAxis::X,
+    Stick::Right,
+    StickAxis::X,
+);
+```
+
+### Default keyboard mapping
+
+| Key | Button | Key | Button |
+|-----|--------|-----|--------|
+| Space | Cross | Enter | Start |
+| C | Circle | Tab | Select |
+| X | Square | Q | L1 |
+| Z | Triangle | E | R1 |
+| W/A/S/D | D-pad | A/D | L2/R2 |
+
+<Info>
+Keyboard mapping is customizable in `config.toml`.
+</Info>
+
+## USB controllers
+
+Support for third-party USB gamepads:
+
+```rust
+use oc_input::usb::{UsbController, UsbControllerManager};
+
+let mut manager = UsbControllerManager::new();
+
+// Scan for USB controllers
+manager.scan_devices()?;
+
+// Get controller by index
+let controller = manager.get_controller(0)?;
+
+// Read input
+let state = controller.read_state()?;
+```
+
+### Supported controllers
+
+- Xbox 360/One controllers
+- DualShock 4 (PS4)
+- Nintendo Switch Pro Controller
+- Generic USB gamepads
+
+## Bluetooth support
+
+Wireless controller pairing:
+
+```rust
+use oc_input::bluetooth::{BluetoothManager, BluetoothAdapter};
+
+let mut bt_manager = BluetoothManager::new();
+
+// Get Bluetooth adapter
+let adapter = bt_manager.get_adapter()?;
+
+// Scan for devices
+adapter.start_scan()?;
+
+// Pair with controller
+let device = adapter.pair_device(device_address)?;
+```
+
+<Note>
+Bluetooth support requires platform Bluetooth stack (BlueZ on Linux, WinBT on Windows).
+</Note>
+
+## Instruments
+
+Guitar Hero and Rock Band peripherals:
+
+<Accordion title="Guitar controllers">
+```rust
+use oc_input::instruments::GuitarController;
+
+let guitar = GuitarController::new(port);
+
+// Check frets
+if guitar.fret_pressed(GuitarFret::Green) {
+    // Green fret
+}
+
+// Check strum
+if guitar.strum_up() {
+    // Strum up
+}
+
+// Check whammy bar
+let whammy = guitar.whammy_position();
+```
+</Accordion>
+
+<Accordion title="Drum controllers">
+```rust
+use oc_input::instruments::DrumController;
+
+let drums = DrumController::new(port);
+
+// Check drum pads
+if drums.pad_hit(DrumPad::Red) {
+    // Red pad hit
+}
+
+// Check pedal
+if drums.kick_pedal() {
+    // Kick drum
+}
+```
+</Accordion>
+
+## PlayStation Eye
+
+Camera support:
+
+```rust
+use oc_input::camera::{Camera, CameraResolution};
+
+let mut camera = Camera::new();
+
+// Set resolution
+camera.set_resolution(CameraResolution::VGA)?;
+
+// Capture frame
+let frame = camera.capture_frame()?;
+```
+
+### Camera resolutions
+
+- 640x480 (VGA) @ 60 FPS
+- 320x240 (QVGA) @ 120 FPS
+
+## Microphone
+
+Microphone input:
+
+```rust
+use oc_input::microphone::{Microphone, SampleRate};
+
+let mut mic = Microphone::new();
+
+// Set sample rate
+mic.set_sample_rate(SampleRate::Hz48000)?;
+
+// Record audio
+let samples = mic.read_samples()?;
+```
+
+## Configuration
+
+Input settings in `config.toml`:
+
+```toml
+[input]
+controller_0 = "dualshock3"  # Controller type
+keyboard_mapping = true       # Enable keyboard mapping
+mouse_sensitivity = 1.0       # Mouse sensitivity
+vibration = true              # Enable vibration
+
+[input.keyboard]
+cross = "Space"
+circle = "C"
+square = "X"
+triangle = "Z"
+start = "Enter"
+select = "Tab"
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/guide/configuration">
+    Input configuration options
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/guide/troubleshooting">
+    Input troubleshooting
+  </Card>
+</CardGroup>

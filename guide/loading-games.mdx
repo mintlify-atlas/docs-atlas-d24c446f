@@ -1,0 +1,371 @@
+---
+title: Loading games
+description: How to load and run PS3 games in oxidized-cell
+---
+
+The oxidized-cell emulator supports multiple PS3 game formats. This guide explains how to load games, install firmware, and manage your game library.
+
+## Supported file formats
+
+The emulator can load the following PS3 executable formats:
+
+### ELF files (.elf)
+
+Plain executable files, typically used for:
+- Homebrew applications
+- Test programs
+- Unencrypted game executables
+
+**Structure**: Standard 64-bit big-endian ELF format with PowerPC 64-bit code.
+
+### SELF files (.self)
+
+Signed Encrypted ELF files used for commercial PS3 software:
+- Commercial games
+- System applications
+- Digital downloads
+
+**Structure**: ELF file wrapped with Sony's encryption and signature (SCE header).
+
+<Note>
+SELF files require PS3 firmware to be installed for decryption. See the [Installing firmware](#installing-firmware) section below.
+</Note>
+
+### PRX files (.prx, .sprx)
+
+PlayStation Relocatable eXecutable - shared libraries and modules:
+- Game libraries
+- System modules
+- Plugin modules
+
+**Structure**: Position-independent code with export/import tables using NID (Name ID) hashing.
+
+### PKG files (.pkg)
+
+PlayStation Package files:
+- Game installations
+- DLC packages
+- Updates
+
+**Structure**: Container format with metadata, files, and directory structure.
+
+### ISO files
+
+PS3 disc images (planned support):
+- Blu-ray game dumps
+- UDF/ISO 9660 file system
+
+<Warning>
+ISO support is currently under development. Extract game files using a PS3 ISO extractor for now.
+</Warning>
+
+## Installing firmware
+
+Most commercial PS3 games require the official PS3 firmware for decryption and system modules.
+
+<Steps>
+  <Step title="Download the firmware">
+    The emulator includes a download script for convenience:
+    
+    **Linux/macOS:**
+    ```bash
+    ./scripts/download-firmware.sh
+    ```
+    
+    **Windows:**
+    ```powershell
+    scripts\download-firmware.bat
+    ```
+    
+    Or download manually from Sony's servers:
+    ```bash
+    wget http://dus01.ps3.update.playstation.net/update/ps3/image/us/2025_0305_c179ad173bbc08b55431d30947725a4b/PS3UPDAT.PUP
+    ```
+  </Step>
+  
+  <Step title="Place the firmware file">
+    Save the `PS3UPDAT.PUP` file in the `firmware/` directory in your emulator folder.
+  </Step>
+  
+  <Step title="Install the firmware">
+    Install using the command line:
+    ```bash
+    cargo run --release -- --install-firmware firmware/PS3UPDAT.PUP
+    ```
+    
+    Or use the UI: **Settings → System → Install Firmware**
+  </Step>
+  
+  <Step title="Verify installation">
+    The emulator will extract firmware files to `dev_flash/`. You should see output like:
+    ```
+    [INFO] Installing PS3 firmware...
+    [INFO] Extracting PUP file...
+    [INFO] Decrypting system files...
+    [INFO] Firmware installed successfully!
+    ```
+  </Step>
+</Steps>
+
+<Note>
+The PS3 System Software is free and legal to download from Sony's official servers. Firmware installation is a one-time process.
+</Note>
+
+## Loading a game
+
+### From the command line
+
+Run the emulator with the path to a game executable:
+
+```bash
+# Load an ELF file
+cargo run --release -- /path/to/game.elf
+
+# Load a SELF file (requires firmware)
+cargo run --release -- /path/to/EBOOT.BIN
+
+# Load from a game directory
+cargo run --release -- /path/to/game/USRDIR/EBOOT.BIN
+```
+
+### From the UI
+
+<Steps>
+  <Step title="Launch the emulator">
+    ```bash
+    cargo run --release
+    ```
+  </Step>
+  
+  <Step title="Open a game">
+    - Click **File → Open Game** (or press `Ctrl+O`)
+    - Browse to your game file
+    - Select the executable (typically `EBOOT.BIN` for PS3 games)
+  </Step>
+  
+  <Step title="Start emulation">
+    - The game will load automatically
+    - Press **F5** to start/resume if paused
+    - Use **F6** to pause, **F7** to stop
+  </Step>
+</Steps>
+
+## Game directory structure
+
+Typical PS3 game directory layout:
+
+```
+GameName/
+├── PS3_DISC.SFB          # Disc identifier
+├── PS3_GAME/
+│   ├── PARAM.SFO         # Game metadata
+│   ├── ICON0.PNG         # Game icon
+│   ├── PIC1.PNG          # Background image
+│   └── USRDIR/
+│       ├── EBOOT.BIN     # Main executable (SELF format)
+│       ├── *.sprx        # Game libraries
+│       └── data/         # Game data files
+└── PS3_UPDATE/           # Game updates
+    └── PARAM.SFO
+```
+
+<Accordion title="Understanding EBOOT.BIN">
+
+`EBOOT.BIN` is the main game executable. It's a SELF file containing:
+
+1. **SCE Header**: Magic bytes `53 43 45 00` ("SCE\0")
+2. **Encryption metadata**: Key type, header info
+3. **Encrypted ELF**: The actual PowerPC executable
+4. **Signature**: Digital signature for authentication
+
+The emulator automatically:
+- Detects the SELF format
+- Decrypts using firmware keys
+- Extracts the ELF executable
+- Loads segments into memory
+- Resolves imports from PRX modules
+
+</Accordion>
+
+## Loading process
+
+When you load a game, the emulator performs these steps:
+
+<Steps>
+  <Step title="File detection">
+    The loader identifies the file format:
+    - Check for ELF magic (`7F 45 4C 46`)
+    - Check for SELF magic (`53 43 45 00`)
+    - Determine if decryption is needed
+  </Step>
+  
+  <Step title="Decryption (SELF files)">
+    For encrypted files:
+    ```
+    [INFO] Loading SELF file: EBOOT.BIN
+    [INFO] SELF header: version=3, key_type=0x00
+    [INFO] Decrypting with firmware keys...
+    [INFO] Decryption successful
+    ```
+  </Step>
+  
+  <Step title="ELF parsing">
+    Parse the ELF structure:
+    - Read ELF header (entry point, segment info)
+    - Parse program headers (LOAD segments)
+    - Parse section headers (symbols, relocations)
+    - Extract metadata (module info, imports/exports)
+  </Step>
+  
+  <Step title="Memory allocation">
+    Load segments into emulated memory:
+    ```
+    [INFO] Loading ELF segments at base address 0x10000000
+    [INFO] Segment 0: vaddr=0x10000000, size=0x200000 [R-X]
+    [INFO] Segment 1: vaddr=0x10200000, size=0x100000 [RW-]
+    ```
+  </Step>
+  
+  <Step title="PRX loading">
+    Load required shared libraries:
+    ```
+    [INFO] Loading PRX: cellGcmSys.prx
+    [INFO] Loading PRX: cellSysutil.prx
+    [INFO] Resolving 245 imports...
+    [INFO] Resolved 230/245 imports
+    ```
+  </Step>
+  
+  <Step title="Symbol resolution">
+    Resolve function imports using NID system:
+    - Hash function names to NIDs
+    - Look up NIDs in PRX export tables
+    - Link import stubs to actual functions
+    - Create HLE stubs for unresolved imports
+  </Step>
+  
+  <Step title="Execution">
+    Start the game:
+    ```
+    [INFO] Entry point: 0x10000000
+    [INFO] Starting PPU thread 0
+    [INFO] Game running
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting game loading
+
+<Accordion title="Error: Invalid ELF magic">
+
+**Problem**: File is not a valid ELF or SELF file.
+
+**Solutions**:
+- Verify the file is not corrupted (check file size)
+- Ensure you're loading the correct file (usually `EBOOT.BIN`)
+- Try re-dumping the game from disc
+- Check if the file is compressed (extract first)
+
+</Accordion>
+
+<Accordion title="Error: Decryption failed">
+
+**Problem**: Cannot decrypt SELF file.
+
+**Solutions**:
+- Install PS3 firmware (see [Installing firmware](#installing-firmware))
+- Verify firmware is properly installed (check `dev_flash/` directory)
+- Ensure firmware version matches game requirements
+- Try reinstalling firmware
+
+</Accordion>
+
+<Accordion title="Error: Failed to load segment">
+
+**Problem**: Cannot load game code into memory.
+
+**Solutions**:
+- Check if file is truncated or corrupted
+- Ensure you have enough RAM (PS3 games can use 4GB+)
+- Try restarting the emulator
+- Check logs for specific memory errors
+
+</Accordion>
+
+<Accordion title="Error: Unresolved imports">
+
+**Problem**: Game requires modules not yet implemented.
+
+**Solutions**:
+- Check which modules are missing in the log
+- Some games may run with HLE stubs (try anyway)
+- Report missing modules on GitHub
+- Check game compatibility list
+
+**Example log**:
+```
+[WARN] Unresolved import: cellSpurs:0x12345678
+[INFO] Created HLE stub for cellSpurs:0x12345678
+```
+
+The emulator will create placeholder functions, but the game may not work correctly.
+
+</Accordion>
+
+<Accordion title="Game loads but crashes immediately">
+
+**Problem**: Game starts but crashes during initialization.
+
+**Solutions**:
+- Switch to Interpreter mode (more compatible)
+- Enable accurate options in CPU settings
+- Check for missing PRX dependencies
+- Review crash logs for specific errors
+- Try enabling `write_color_buffers` in GPU settings
+
+</Accordion>
+
+## Game compatibility
+
+<Note>
+oxidized-cell is in early development. Game compatibility is limited and many features are still being implemented.
+</Note>
+
+### Currently working
+- PS3 homebrew applications
+- Simple test programs
+- Basic ELF executables
+
+### Partially working
+- Commercial games with basic requirements
+- Games using common HLE modules (cellGcmSys, cellSysutil)
+
+### Not yet supported
+- Games requiring advanced SPU features
+- Games using SPURS (SPU runtime system)
+- Network/online features
+- Most AAA titles
+
+## Command-line options for loading
+
+```bash
+# Load with specific settings
+cargo run --release -- game.elf --ppu-decoder interpreter
+
+# Load with logging
+cargo run --release -- game.elf --log-level debug
+
+# Load and install firmware
+cargo run --release -- --install-firmware PS3UPDAT.PUP
+
+# Load with breakpoints
+cargo run --release -- game.elf --breakpoint 0x10000
+```
+
+## Next steps
+
+After loading a game:
+- Configure [input mappings](/guide/configuration#input-settings)
+- Adjust [graphics settings](/guide/configuration#gpu-settings) for your system
+- Use [debugging tools](/guide/debugging) if you encounter issues
+- Check the [troubleshooting guide](/guide/troubleshooting) for common problems

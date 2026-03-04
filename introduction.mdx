@@ -1,0 +1,266 @@
+---
+title: Oxidized Cell Documentation
+description: A PlayStation 3 emulator written in Rust and C++ that accurately emulates the Cell Broadband Engine and RSX graphics processor
+mode: custom
+---
+
+<div className="relative overflow-hidden bg-gradient-to-br from-[#0f1117] via-[#1a1d27] to-[#0f1117] dark:from-[#0f1117] dark:via-[#1a1d27] dark:to-[#0f1117] py-20 px-4 sm:px-6 lg:px-8">
+  <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center [mask-image:linear-gradient(180deg,white,rgba(255,255,255,0))]"></div>
+  
+  <div className="relative max-w-7xl mx-auto">
+    <div className="text-center">
+      <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-gray-100 dark:text-gray-100 mb-6">
+        Oxidized Cell
+      </h1>
+      <p className="text-lg sm:text-xl text-gray-400 dark:text-gray-400 max-w-3xl mx-auto mb-8">
+        A high-performance PlayStation 3 emulator leveraging Rust's memory safety and C++ with LLVM for accurate Cell BE and RSX emulation
+      </p>
+      
+      <div className="flex flex-wrap justify-center gap-4 mb-12">
+        <a 
+          href="/quickstart" 
+          className="inline-flex items-center px-6 py-3 rounded-lg bg-[#7c7c7c] hover:bg-[#8c8c8c] text-white font-semibold transition-colors no-underline"
+        >
+          Get Started
+        </a>
+        <a 
+          href="/installation" 
+          className="inline-flex items-center px-6 py-3 rounded-lg border border-gray-600 dark:border-gray-600 bg-transparent hover:bg-[#242838] dark:hover:bg-[#242838] text-gray-100 dark:text-gray-100 font-semibold transition-colors no-underline"
+        >
+          Installation Guide
+        </a>
+        <a 
+          href="/concepts/architecture" 
+          className="inline-flex items-center px-6 py-3 rounded-lg border border-gray-600 dark:border-gray-600 bg-transparent hover:bg-[#242838] dark:hover:bg-[#242838] text-gray-100 dark:text-gray-100 font-semibold transition-colors no-underline"
+        >
+          Learn Architecture
+        </a>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-4xl mx-auto">
+        <div className="text-center">
+          <div className="text-3xl font-bold text-[#7c7c7c] mb-1">2,700+</div>
+          <div className="text-sm text-gray-400 dark:text-gray-400">PPU Instructions</div>
+        </div>
+        <div className="text-center">
+          <div className="text-3xl font-bold text-[#7c7c7c] mb-1">128-bit</div>
+          <div className="text-sm text-gray-400 dark:text-gray-400">Vector Operations</div>
+        </div>
+        <div className="text-center">
+          <div className="text-3xl font-bold text-[#7c7c7c] mb-1">Vulkan</div>
+          <div className="text-sm text-gray-400 dark:text-gray-400">Graphics Backend</div>
+        </div>
+        <div className="text-center">
+          <div className="text-3xl font-bold text-[#7c7c7c] mb-1">LLVM</div>
+          <div className="text-sm text-gray-400 dark:text-gray-400">JIT Compilation</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center mb-12">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">Quick Start</h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+      Get oxidized-cell running in minutes. Follow these steps to build and launch the emulator.
+    </p>
+  </div>
+
+  <Steps>
+    <Step title="Install dependencies">
+      Install Rust 1.70+, a C++17 compiler, CMake, LLVM 14+, and Vulkan SDK 1.2+.
+      
+      ```bash Ubuntu/Debian
+      sudo apt update
+      sudo apt install -y build-essential cmake llvm-dev libvulkan-dev libasound2-dev
+      ```
+    </Step>
+
+    <Step title="Clone and build">
+      Clone the repository and build with Cargo in release mode for optimal performance.
+      
+      ```bash
+      git clone https://github.com/darkace1998/oxidized-cell.git
+      cd oxidized-cell
+      cargo build --release
+      ```
+    </Step>
+
+    <Step title="Install PS3 firmware">
+      Download and install the official PS3 firmware to decrypt commercial games.
+      
+      ```bash
+      ./scripts/download-firmware.sh
+      ```
+      
+      <Note>
+        The PS3 System Software is free and legal to download from Sony's servers. This is required for running encrypted commercial games.
+      </Note>
+    </Step>
+
+    <Step title="Run the emulator">
+      Launch the emulator with the UI or load a game directly.
+      
+      ```bash
+      # Launch UI mode
+      cargo run --release
+
+      # Load a specific game
+      cargo run --release -- /path/to/game.elf
+      ```
+    </Step>
+  </Steps>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="mb-12">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">Core Features</h2>
+    <p className="text-base text-gray-600 dark:text-gray-400">
+      Explore the powerful components that make oxidized-cell a high-accuracy PS3 emulator.
+    </p>
+  </div>
+
+  <CardGroup cols={2}>
+    <Card title="PPU Emulation" icon="microchip" href="/components/ppu">
+      Full PowerPC interpreter with VMX/AltiVec SIMD support and LLVM-based JIT compilation
+    </Card>
+    <Card title="SPU Emulation" icon="cpu" href="/components/spu">
+      Complete SPU interpreter with 128-bit vector operations and dedicated JIT compiler
+    </Card>
+    <Card title="RSX Graphics" icon="display" href="/components/rsx">
+      Vulkan-based rendering backend with NV4097 method handlers and multi-frame sync
+    </Card>
+    <Card title="LV2 Kernel" icon="server" href="/components/lv2-kernel">
+      High-level emulation of PS3 syscalls, process/thread management, and synchronization
+    </Card>
+    <Card title="HLE Modules" icon="puzzle-piece" href="/components/hle-modules">
+      System library implementations for cellGcmSys, cellSysutil, cellSpurs, and more
+    </Card>
+    <Card title="Game Loading" icon="folder-open" href="/guide/loading-games">
+      ELF/SELF/PRX loader with decryption, ISO 9660, PKG, and PARAM.SFO support
+    </Card>
+    <Card title="Audio System" icon="volume" href="/components/audio">
+      Cross-platform audio with cpal backend, 8 ports, and multi-channel support
+    </Card>
+    <Card title="Input Handling" icon="gamepad" href="/components/input">
+      Controller, keyboard, and mouse emulation with customizable key mappings
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="mb-12">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">Architecture Overview</h2>
+    <p className="text-base text-gray-600 dark:text-gray-400">
+      Understand the hybrid Rust/C++ design powering oxidized-cell.
+    </p>
+  </div>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <a 
+      href="/concepts/architecture"
+      className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#7c7c7c] dark:hover:border-[#7c7c7c] overflow-hidden transition-colors no-underline bg-white dark:bg-[#1a1d27]"
+    >
+      <div className="h-48 bg-gradient-to-br from-[#1a1d27] to-[#242838] flex items-center justify-center">
+        <svg className="w-24 h-24 text-[#7c7c7c]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+        </svg>
+      </div>
+      <div className="p-6">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2 group-hover:text-[#7c7c7c] dark:group-hover:text-[#7c7c7c] transition-colors">
+          System Architecture
+        </h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+          Learn how Rust's safety combines with C++ performance for accurate emulation.
+        </p>
+        <div className="flex items-center text-sm text-[#7c7c7c] group-hover:text-[#8c8c8c] transition-colors">
+          <span>Explore architecture</span>
+          <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+
+    <a 
+      href="/concepts/cell-be"
+      className="group block rounded-2xl border border-gray-200 dark:border-[#27272a] hover:border-[#7c7c7c] dark:hover:border-[#7c7c7c] overflow-hidden transition-colors no-underline bg-white dark:bg-[#1a1d27]"
+    >
+      <div className="h-48 bg-gradient-to-br from-[#1a1d27] to-[#242838] flex items-center justify-center">
+        <svg className="w-24 h-24 text-[#7c7c7c]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+        </svg>
+      </div>
+      <div className="p-6">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2 group-hover:text-[#7c7c7c] dark:group-hover:text-[#7c7c7c] transition-colors">
+          Cell Broadband Engine
+        </h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+          Deep dive into the PS3's unique PPU + 8 SPU heterogeneous architecture.
+        </p>
+        <div className="flex items-center text-sm text-[#7c7c7c] group-hover:text-[#8c8c8c] transition-colors">
+          <span>Learn about Cell BE</span>
+          <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    </a>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="mb-12">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">Developer Resources</h2>
+    <p className="text-base text-gray-600 dark:text-gray-400">
+      Build, extend, and contribute to oxidized-cell.
+    </p>
+  </div>
+
+  <CardGroup cols={3}>
+    <Card title="Building from Source" icon="hammer" href="/dev/building">
+      Platform-specific build instructions for Linux, Windows, and macOS
+    </Card>
+    <Card title="Project Structure" icon="folder-tree" href="/dev/project-structure">
+      Navigate the codebase: crates, modules, and C++ components
+    </Card>
+    <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+      Join the project: guidelines, code style, and high-priority tasks
+    </Card>
+    <Card title="Core API" icon="book" href="/api/core">
+      Emulator, Config, and logging infrastructure
+    </Card>
+    <Card title="Memory API" icon="database" href="/api/memory">
+      Virtual memory system and reservation management
+    </Card>
+    <Card title="Loader API" icon="file-code" href="/api/loader">
+      ELF, SELF, PRX loaders and crypto engine
+    </Card>
+  </CardGroup>
+</div>
+
+<div className="mt-20 mb-16 max-w-5xl mx-auto px-6">
+  <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gradient-to-br from-white to-gray-50 dark:from-[#1a1d27] dark:to-[#242838] p-8 sm:p-12 text-center">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+      Ready to emulate PS3 games?
+    </h2>
+    <p className="text-base text-gray-600 dark:text-gray-400 max-w-2xl mx-auto mb-8">
+      Dive into the quickstart guide and run your first game in minutes, or explore the comprehensive API reference for advanced integration.
+    </p>
+    <div className="flex flex-wrap justify-center gap-4">
+      <a 
+        href="/quickstart" 
+        className="inline-flex items-center px-6 py-3 rounded-lg bg-[#7c7c7c] hover:bg-[#8c8c8c] text-white font-semibold transition-colors no-underline"
+      >
+        Get Started Now
+      </a>
+      <a 
+        href="/api/core" 
+        className="inline-flex items-center px-6 py-3 rounded-lg border border-gray-300 dark:border-[#27272a] hover:border-[#7c7c7c] dark:hover:border-[#7c7c7c] bg-transparent text-gray-900 dark:text-gray-100 font-semibold transition-colors no-underline"
+      >
+        View API Reference
+      </a>
+    </div>
+  </div>
+</div>

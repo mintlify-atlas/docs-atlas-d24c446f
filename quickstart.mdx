@@ -1,80 +1,400 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick start
+description: Get up and running with oxidized-cell in minutes
 ---
 
-## Get started in three steps
+This guide will help you run your first PS3 game with oxidized-cell. Follow these steps to go from installation to playing.
 
-Get your documentation site running locally and make your first customization.
+<Note>
+  Before starting, make sure you have [installed oxidized-cell](/get-started/installation) on your system.
+</Note>
 
-### Step 1: Set up your local environment
+## Running the emulator
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+Launch oxidized-cell from the command line:
 
-### Step 2: Deploy your changes
+<CodeGroup>
+```bash Linux/macOS
+# Navigate to the oxidized-cell directory
+cd oxidized-cell
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+# Run the emulator
+./target/release/oxidized-cell
+```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+```powershell Windows
+# Navigate to the oxidized-cell directory
+cd oxidized-cell
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+# Run the emulator
+.\target\release\oxidized-cell.exe
+```
+</CodeGroup>
 
-### Step 3: Go live
+This launches the main UI window with the game list view.
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+## Running your first game
+
+<Steps>
+  <Step title="Choose a game format">
+    oxidized-cell supports several PS3 file formats:
+
+    | Format | Extension | Description |
+    |--------|-----------|-------------|
+    | **ELF** | `.elf` | Unencrypted executables (homebrew) |
+    | **SELF** | `.self` | Encrypted executables (requires firmware) |
+    | **ISO** | `.iso` | Disc images |
+    | **PKG** | `.pkg` | PlayStation packages |
+    | **PRX** | `.prx` | Shared libraries |
+
+    <Note>
+      Start with homebrew ELF files - they don't require firmware installation and are easier to test with.
+    </Note>
+  </Step>
+
+  <Step title="Launch via command line">
+    The simplest way to run a game is from the command line:
+
+    ```bash
+    cargo run --release -- /path/to/game.elf
+    ```
+
+    Or if you've built the release binary:
+
+    ```bash
+    ./target/release/oxidized-cell /path/to/game.elf
+    ```
+
+    The emulator will:
+    1. Load the ELF file
+    2. Initialize the Cell processor components (PPU, SPU)
+    3. Set up the RSX graphics subsystem
+    4. Begin execution
+  </Step>
+
+  <Step title="Launch via UI">
+    You can also load games through the user interface:
+
+    1. Launch oxidized-cell without arguments
+    2. Click **File → Open** in the menu bar
+    3. Navigate to your game file
+    4. Click **Open**
+
+    Or set up a games directory:
+
+    1. Go to **Settings → Paths**
+    2. Set **Games Directory** to your PS3 games folder
+    3. Games will automatically appear in the game list
+    4. Double-click a game to launch it
+  </Step>
+
+  <Step title="Configure basic settings">
+    Before running demanding games, configure the emulator for optimal performance:
+
+    ```bash
+    # Create a config.toml file in the oxidized-cell directory
+    ```
+
+    ```toml config.toml
+    [cpu]
+    ppu_decoder = "jit"        # Use JIT for better performance
+    spu_decoder = "jit"        # Use JIT for SPU as well
+
+    [graphics]
+    backend = "vulkan"         # Vulkan rendering backend
+    resolution_scale = 1       # Native resolution (increase for upscaling)
+
+    [audio]
+    backend = "cpal"           # Cross-platform audio library
+    volume = 100               # Volume level (0-100)
+    ```
+
+    Or configure through the UI:
+    - **Settings → CPU** - Set decoders to "Recompiler" (JIT)
+    - **Settings → Graphics** - Adjust resolution and rendering options
+    - **Settings → Audio** - Configure audio output
+  </Step>
+</Steps>
+
+## Understanding decoder modes
+
+The emulator offers two execution modes for the PowerPC (PPU) and SIMD (SPU) processors:
+
+### Interpreter mode
+
+```toml config.toml
+[cpu]
+ppu_decoder = "interpreter"
+spu_decoder = "interpreter"
+```
+
+**Pros:**
+- More accurate and compatible
+- Better for debugging
+- Simpler implementation with fewer bugs
+
+**Cons:**
+- Significantly slower (2-10x)
+- Higher CPU usage
+
+**Use when:** A game doesn't work with JIT or you're debugging issues
+
+### JIT (Recompiler) mode
+
+```toml config.toml
+[cpu]
+ppu_decoder = "jit"
+spu_decoder = "jit"
+```
+
+**Pros:**
+- Much faster execution (5-10x speedup)
+- Uses LLVM for optimized native code generation
+- Better performance on complex games
+
+**Cons:**
+- Slightly less accurate
+- May have compatibility issues
+
+**Use when:** You want the best performance (recommended for most games)
+
+<Note>
+  The JIT compiler translates PowerPC instructions to x86-64 (or ARM64 on Apple Silicon) using LLVM. It applies O2 optimization passes for maximum performance.
+</Note>
+
+## Testing the emulator
+
+Here's a complete example of running a homebrew game:
+
+<Steps>
+  <Step title="Download a homebrew application">
+    Find PS3 homebrew applications from sources like:
+    - [PSX-Place Forums](https://www.psx-place.com/forums/ps3-homebrew/)
+    - [Homebrew Database](https://store.brewology.com/)
+
+    Look for `.elf` or `.self` files.
+  </Step>
+
+  <Step title="Run with default settings">
+    ```bash
+    ./target/release/oxidized-cell ~/Downloads/homebrew.elf
+    ```
+  </Step>
+
+  <Step title="Monitor execution">
+    Watch the console output for emulation status:
+
+    ```
+    [INFO] Loading ELF file: homebrew.elf
+    [INFO] Initializing PPU with interpreter decoder
+    [INFO] Initializing 6 SPU threads
+    [INFO] RSX: Vulkan backend initialized
+    [INFO] Audio: cpal backend ready (48kHz, 2 channels)
+    [INFO] Starting emulation...
+    ```
+  </Step>
+
+  <Step title="Check performance">
+    Press **F12** to toggle the performance overlay showing:
+    - FPS (frames per second)
+    - Frame time (milliseconds)
+    - PPU/SPU utilization
+  </Step>
+</Steps>
+
+## Keyboard controls
+
+By default, keyboard keys are mapped to PS3 controller buttons:
+
+| PS3 Button | Keyboard Key |
+|------------|-------------|
+| Cross (✕) | Z |
+| Circle (○) | X |
+| Square (□) | C |
+| Triangle (△) | V |
+| D-Pad | Arrow keys |
+| L1 / R1 | Q / E |
+| L2 / R2 | A / D |
+| Start | Enter |
+| Select | Backspace |
+
+### Emulator hotkeys
+
+| Hotkey | Action |
+|--------|--------|
+| **F5** | Start/Resume emulation |
+| **F6** | Pause emulation |
+| **F7** | Stop emulation |
+| **F9** | Toggle fullscreen |
+| **F11** | Take screenshot |
+| **F12** | Toggle performance overlay |
+| **Ctrl+O** | Open game |
+| **Ctrl+L** | Toggle log viewer |
+| **Esc** | Exit fullscreen / Return to game list |
+
+## Running the test suite
+
+Validate your installation by running the emulator's test suite:
+
+<CodeGroup>
+```bash Run all tests
+# Run all tests across all components
+cargo test
+```
+
+```bash Test specific components
+# Test memory subsystem (128+ tests)
+cargo test -p oc-memory
+
+# Test PPU interpreter (75+ tests)
+cargo test -p oc-ppu
+
+# Test SPU implementation (14+ tests)
+cargo test -p oc-spu
+
+# Test RSX graphics (36+ tests)
+cargo test -p oc-rsx
+```
+
+```bash Verbose output
+# Show detailed test output
+cargo test -- --nocapture
+```
+</CodeGroup>
+
+Expected output:
+
+```
+running 253 tests
+test memory::tests::test_page_allocation ... ok
+test ppu::tests::test_add_instruction ... ok
+test spu::tests::test_vector_add ... ok
+...
+
+test result: ok. 253 passed; 0 failed; 0 ignored; 0 measured
+```
+
+## Example: Running with UI mode
+
+To explore the full UI and features:
+
+```bash
+# Launch without arguments to open the UI
+cargo run --release
+```
+
+The UI provides:
+
+1. **Game List** - Browse installed games with cover art and metadata
+2. **Log Viewer** - Real-time logs with filtering and search
+3. **Settings Panel** - Configure all emulator options
+4. **Debugger** - Step through PPU/SPU instructions
+5. **Memory Viewer** - Inspect and edit memory in real-time
+6. **Performance Metrics** - FPS, frame time, and resource usage
+
+## Common issues
+
+### Game won't start
+
+<Tabs>
+  <Tab title="Check file format">
+    Verify the file is a supported format:
+
+    ```bash
+    file game.elf
+    # Should show: ELF 64-bit MSB executable, 64-bit PowerPC
+    ```
+  </Tab>
+
+  <Tab title="Enable verbose logging">
+    Run with detailed logs:
+
+    ```bash
+    RUST_LOG=debug cargo run --release -- game.elf
+    ```
+
+    Check the output for error messages about missing dependencies or unsupported instructions.
+  </Tab>
+
+  <Tab title="Try interpreter mode">
+    If JIT fails, fall back to interpreter:
+
+    ```toml config.toml
+    [cpu]
+    ppu_decoder = "interpreter"
+    spu_decoder = "interpreter"
+    ```
+  </Tab>
+</Tabs>
+
+### Poor performance
+
+<Steps>
+  <Step title="Enable JIT compilers">
+    Make sure both decoders are set to JIT mode in `config.toml`
+  </Step>
+
+  <Step title="Check GPU drivers">
+    Verify Vulkan is working:
+
+    ```bash
+    vulkaninfo | grep "Device Name"
+    ```
+  </Step>
+
+  <Step title="Reduce resolution scale">
+    Start with native resolution:
+
+    ```toml config.toml
+    [graphics]
+    resolution_scale = 1
+    ```
+  </Step>
+</Steps>
+
+### Graphics not displaying
+
+<Warning>
+  Ensure your GPU supports Vulkan 1.2 or later and drivers are up to date.
+</Warning>
+
+Test Vulkan support:
+
+```bash
+# Linux
+vulkaninfo
+
+# Windows (PowerShell)
+vulkaninfo.exe
+
+# macOS
+vulkaninfo
+```
+
+If Vulkan is not working, check:
+- GPU drivers are installed and current
+- Vulkan SDK is installed
+- `VK_ICD_FILENAMES` environment variable points to your ICD
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Now that you've run your first game:
 
-<CardGroup cols={2}>
+- [Set up PS3 firmware](/get-started/firmware-setup) to run commercial games
+- [Configure advanced settings](/configuration/settings) for better performance
+- [Learn about CPU decoders](/emulation/cpu) for PPU and SPU
+- [Optimize graphics settings](/configuration/graphics) for your GPU
+- [Use debugging tools](/development/debugging) to troubleshoot issues
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+## Getting help
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+If you encounter issues:
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+1. Check the [troubleshooting guide](/troubleshooting)
+2. Review the [FAQ](/faq)
+3. Open an issue on [GitHub](https://github.com/darkace1998/oxidized-cell/issues)
+4. Include:
+   - Your system specs (OS, CPU, GPU)
+   - Game information (title, format)
+   - Log output with `RUST_LOG=debug`
+   - Steps to reproduce

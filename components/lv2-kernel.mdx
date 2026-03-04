@@ -1,0 +1,389 @@
+---
+title: LV2 kernel
+description: PS3 LV2 hypervisor/kernel emulation with syscall handling
+---
+
+LV2 is the PS3's hypervisor and kernel layer. Oxidized-cell provides high-level emulation (HLE) of LV2 system calls for process management, threading, synchronization, file I/O, and time management.
+
+## Overview
+
+The LV2 component (`oc-lv2`) implements:
+
+- **Syscall handling**: 400+ PS3 system calls
+- **Process management**: Process creation and lifecycle
+- **Thread management**: Thread scheduling and synchronization
+- **Kernel objects**: Mutexes, semaphores, condition variables, event flags
+- **File system**: Virtual file system operations
+- **Time management**: System time and timers
+
+```rust
+pub use objects::ObjectManager;
+pub use process::ProcessManager;
+pub use syscall::SyscallHandler;
+pub use thread::ThreadManager;
+```
+
+## Architecture
+
+LV2 is organized into modules:
+
+- **syscall**: Syscall dispatch and handler registration
+- **syscall_numbers**: Syscall ID constants
+- **process**: Process management and lifecycle
+- **thread**: Thread creation and scheduling
+- **objects**: Kernel object management
+- **sync**: Synchronization primitives
+- **fs**: File system operations
+- **memory**: Memory management syscalls
+- **time**: Time and timer syscalls
+- **timer**: Timer objects
+- **spu**: SPU management syscalls
+- **prx**: PRX (shared library) loading
+
+## Syscall handler
+
+The `SyscallHandler` dispatches syscalls from PPU code:
+
+```rust
+use oc_lv2::SyscallHandler;
+
+let mut handler = SyscallHandler::new(
+    memory.clone(),
+    object_manager.clone(),
+);
+
+// Register syscall handlers
+handler.register_all();
+
+// Execute syscall
+let result = handler.handle(
+    syscall_id,
+    &mut ppu_thread,
+)?;
+```
+
+### Syscall execution
+
+1. **PPU executes** `sc` instruction with syscall ID in r11
+2. **Trap to emulator** with syscall number and arguments in r3-r10
+3. **Lookup handler** for syscall ID
+4. **Execute handler** with thread context
+5. **Return result** in r3, error code in r4
+
+<Note>
+Syscalls follow the PS3 ABI: arguments in r3-r10, return value in r3.
+</Note>
+
+## Process management
+
+The `ProcessManager` handles process lifecycle:
+
+```rust
+use oc_lv2::ProcessManager;
+
+let mut pm = ProcessManager::new();
+
+// Create process from ELF
+let process_id = pm.create_process(
+    elf_data,
+    args,
+    env,
+)?;
+
+// Load process into memory
+pm.load_process(process_id, &mut memory)?;
+
+// Get process info
+let info = pm.get_process_info(process_id)?;
+```
+
+### Process structure
+
+<Accordion title="Process components">
+- **Process ID**: Unique identifier
+- **Entry point**: Main function address
+- **Memory map**: Code, data, heap, stack regions
+- **Threads**: List of threads in process
+- **PRX modules**: Loaded shared libraries
+- **File descriptors**: Open file handles
+- **Working directory**: Current directory path
+</Accordion>
+
+## Thread management
+
+The `ThreadManager` handles thread creation and scheduling:
+
+```rust
+use oc_lv2::ThreadManager;
+
+let mut tm = ThreadManager::new();
+
+// Create thread
+let thread_id = tm.create_thread(
+    entry_point,
+    stack_size,
+    priority,
+    name,
+)?;
+
+// Start thread execution
+tm.start_thread(thread_id)?;
+
+// Wait for thread to complete
+tm.join_thread(thread_id)?;
+```
+
+### Thread states
+
+```
+[Created] --> [Ready] --> [Running] --> [Terminated]
+               ^   |           |
+               |   v           v
+               [Blocked]   [Waiting]
+```
+
+### Thread priority
+
+PS3 thread priority ranges from 0 (highest) to 3071 (lowest):
+
+| Priority | Description |
+|----------|-------------|
+| 0-255 | Real-time priority |
+| 256-767 | High priority |
+| 768-2047 | Normal priority |
+| 2048-3071 | Low priority |
+
+## Synchronization primitives
+
+### Mutex
+
+Mutual exclusion lock:
+
+```rust
+// sys_mutex_create
+let mutex_id = syscall_handler.handle(
+    80, // sys_mutex_create
+    &mut thread,
+)?;
+
+// sys_mutex_lock (blocking)
+syscall_handler.handle(
+    81, // sys_mutex_lock
+    &mut thread,
+)?;
+
+// sys_mutex_unlock
+syscall_handler.handle(
+    82, // sys_mutex_unlock
+    &mut thread,
+)?;
+```
+
+### Semaphore
+
+Counting semaphore:
+
+```rust
+// sys_semaphore_create
+let sem_id = syscall_handler.handle(
+    94, // sys_semaphore_create
+    &mut thread,
+)?;
+
+// sys_semaphore_wait (decrement)
+syscall_handler.handle(
+    95, // sys_semaphore_wait
+    &mut thread,
+)?;
+
+// sys_semaphore_post (increment)
+syscall_handler.handle(
+    96, // sys_semaphore_post
+    &mut thread,
+)?;
+```
+
+### Condition variable
+
+Thread notification:
+
+```rust
+// sys_cond_create
+let cond_id = syscall_handler.handle(
+    100, // sys_cond_create
+    &mut thread,
+)?;
+
+// sys_cond_wait (with mutex)
+syscall_handler.handle(
+    101, // sys_cond_wait
+    &mut thread,
+)?;
+
+// sys_cond_signal (wake one)
+syscall_handler.handle(
+    102, // sys_cond_signal
+    &mut thread,
+)?;
+```
+
+### Event flag
+
+Bit-based synchronization:
+
+```rust
+// sys_event_flag_create
+let flag_id = syscall_handler.handle(
+    128, // sys_event_flag_create
+    &mut thread,
+)?;
+
+// sys_event_flag_wait (wait for bits)
+syscall_handler.handle(
+    129, // sys_event_flag_wait
+    &mut thread,
+)?;
+
+// sys_event_flag_set (set bits)
+syscall_handler.handle(
+    130, // sys_event_flag_set
+    &mut thread,
+)?;
+```
+
+## File system
+
+LV2 provides file system syscalls:
+
+<Tabs>
+  <Tab title="File operations">
+    ```rust
+    // sys_fs_open
+    let fd = syscall_handler.handle(801, &mut thread)?;
+    
+    // sys_fs_read
+    let bytes_read = syscall_handler.handle(802, &mut thread)?;
+    
+    // sys_fs_write
+    let bytes_written = syscall_handler.handle(803, &mut thread)?;
+    
+    // sys_fs_close
+    syscall_handler.handle(804, &mut thread)?;
+    ```
+  </Tab>
+  <Tab title="Directory operations">
+    ```rust
+    // sys_fs_opendir
+    let dir_fd = syscall_handler.handle(810, &mut thread)?;
+    
+    // sys_fs_readdir
+    let entry = syscall_handler.handle(811, &mut thread)?;
+    
+    // sys_fs_closedir
+    syscall_handler.handle(812, &mut thread)?;
+    ```
+  </Tab>
+</Tabs>
+
+### Virtual file system paths
+
+| Path | Description |
+|------|-------------|
+| `/dev_hdd0/` | Hard disk drive |
+| `/dev_bdvd/` | Blu-ray disc |
+| `/dev_usb000/` | USB device 0 |
+| `/dev_flash/` | System flash |
+| `/app_home/` | Application directory |
+
+## Memory management
+
+Memory allocation syscalls:
+
+```rust
+// sys_memory_allocate (allocate memory)
+let addr = syscall_handler.handle(
+    348, // sys_memory_allocate
+    &mut thread,
+)?;
+
+// sys_memory_free (free memory)
+syscall_handler.handle(
+    349, // sys_memory_free
+    &mut thread,
+)?;
+```
+
+## Time management
+
+Time and timer syscalls:
+
+```rust
+// sys_time_get_current_time (microseconds since epoch)
+let time_us = syscall_handler.handle(
+    147, // sys_time_get_current_time
+    &mut thread,
+)?;
+
+// sys_timer_usleep (sleep microseconds)
+syscall_handler.handle(
+    141, // sys_timer_usleep
+    &mut thread,
+)?;
+```
+
+## Syscall categories
+
+<CardGroup cols={2}>
+  <Card title="Process" icon="microchip">
+    Process creation, exit, info
+  </Card>
+  <Card title="Thread" icon="layer-group">
+    Thread creation, join, priority
+  </Card>
+  <Card title="Sync" icon="lock">
+    Mutex, semaphore, cond, event flag
+  </Card>
+  <Card title="File system" icon="folder">
+    Open, read, write, close, stat
+  </Card>
+  <Card title="Memory" icon="memory">
+    Allocate, free, protect
+  </Card>
+  <Card title="Time" icon="clock">
+    Current time, sleep, timers
+  </Card>
+  <Card title="SPU" icon="cpu">
+    SPU thread creation, group management
+  </Card>
+  <Card title="PRX" icon="book">
+    Load module, get exports
+  </Card>
+</CardGroup>
+
+## Implementation status
+
+Syscall implementation coverage:
+
+- ✅ **Process**: 80%
+- ✅ **Thread**: 90%
+- ✅ **Sync**: 85%
+- ✅ **File system**: 70%
+- ✅ **Memory**: 75%
+- ✅ **Time**: 95%
+- 🚧 **SPU**: 60%
+- 🚧 **PRX**: 65%
+
+<Note>
+Most commonly used syscalls are implemented. Rare/obscure syscalls may be stubbed.
+</Note>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="LV2 API" icon="code" href="/api/lv2">
+    LV2 API reference
+  </Card>
+  <Card title="Debugging" icon="bug" href="/guide/debugging">
+    Debug syscall execution
+  </Card>
+</CardGroup>

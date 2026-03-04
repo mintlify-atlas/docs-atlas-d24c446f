@@ -1,0 +1,455 @@
+---
+title: Cell Broadband Engine
+description: Architecture of the Cell BE processor with PPU and SPU cores
+---
+
+# Cell Broadband Engine architecture
+
+The PlayStation 3 is powered by the Cell Broadband Engine (Cell BE), a unique heterogeneous processor designed by Sony, Toshiba, and IBM. It combines a general-purpose PowerPC core (PPU) with 8 specialized SIMD processors (SPUs).
+
+## Overview
+
+<Note>
+  The PS3 has 8 SPUs physically, but only 6 are usable by games. One is reserved for the OS, and one is disabled for manufacturing yield.
+</Note>
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Cell Broadband Engine                     │
+│                         @ 3.2 GHz                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌────────────────────────────────────────────────┐          │
+│  │  PPU (PowerPC Processing Unit)                 │          │
+│  │  ┌──────────────────────────────────────────┐  │          │
+│  │  │  PowerPC 970 core (64-bit)               │  │          │
+│  │  │  • 32 x 64-bit GPRs                       │  │          │
+│  │  │  • 32 x 64-bit FPRs                       │  │          │
+│  │  │  • 32 x 128-bit VRs (VMX/AltiVec)        │  │          │
+│  │  │  • 32 KB L1 I-cache + 32 KB L1 D-cache   │  │          │
+│  │  │  • 512 KB L2 cache                        │  │          │
+│  │  └──────────────────────────────────────────┘  │          │
+│  └────────────────────────────────────────────────┘          │
+│                          │                                   │
+│         ┌────────────────┴─────────────────┐                │
+│         │     Element Interconnect Bus     │                │
+│         │          (EIB - Ring)            │                │
+│         └────────────────┬─────────────────┘                │
+│                          │                                   │
+│  ┌───────────┬───────────┴───────────┬───────────┐          │
+│  │           │                       │           │          │
+│  ▼           ▼                       ▼           ▼          │
+│ ┌───┐     ┌───┐     ┌───┐ ┌───┐   ┌───┐     ┌───┐         │
+│ │SPU│     │SPU│ ... │SPU│ │SPU│   │SPU│     │SPU│         │
+│ │ 0 │     │ 1 │     │ 4 │ │ 5 │   │ 6 │     │ 7 │         │
+│ └───┘     └───┘     └───┘ └───┘   └───┘     └───┘         │
+│   │         │         │     │       │         │            │
+│  256KB    256KB     256KB 256KB   256KB  (disabled)        │
+│   LS        LS        LS    LS      LS                     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+         │                                │
+         ▼                                ▼
+    ┌─────────┐                      ┌─────────┐
+    │ 256 MB  │                      │ RSX GPU │
+    │   XDR   │                      │         │
+    │  DRAM   │                      │ 256 MB  │
+    └─────────┘                      │  GDDR3  │
+                                     └─────────┘
+```
+
+## PPU (PowerPC Processing Unit)
+
+The PPU is the main control processor, responsible for:
+- Running the operating system (LV2 kernel)
+- Managing game logic and AI
+- Coordinating SPU workloads
+- Handling I/O and system calls
+
+### PPU architecture
+
+**Instruction set**: PowerPC 64-bit (compatible with PowerPC 970)
+
+**Registers**:
+- **32 GPRs** (General Purpose Registers): 64-bit integer registers
+- **32 FPRs** (Floating Point Registers): 64-bit double-precision floats
+- **32 VRs** (Vector Registers): 128-bit VMX/AltiVec SIMD registers
+- **Special registers**: LR (Link Register), CTR (Count Register), CR (Condition Register), XER (Fixed-Point Exception Register)
+
+**Memory model**:
+- 64-bit addressing (though PS3 uses 32-bit addresses)
+- Big-endian byte order
+- Hardware support for memory reservations (lwarx/stwcx for atomics)
+
+### PPU thread state
+
+From `oc-ppu/src/thread.rs:9-60`:
+
+```rust
+pub struct PpuRegisters {
+    /// General Purpose Registers (64-bit)
+    pub gpr: [u64; 32],
+    /// Floating Point Registers (64-bit)
+    pub fpr: [f64; 32],
+    /// Vector Registers (128-bit, stored as 4 x u32)
+    pub vr: [[u32; 4]; 32],
+    /// Condition Register
+    pub cr: u32,
+    /// Link Register
+    pub lr: u64,
+    /// Count Register
+    pub ctr: u64,
+    /// Fixed-Point Exception Register
+    pub xer: u64,
+    /// FP Status and Control Register
+    pub fpscr: u64,
+    /// Vector Status and Control Register
+    pub vscr: u32,
+    /// Program Counter
+    pub cia: u64,
+    /// Machine State Register
+    pub msr: u64,
+}
+```
+
+### PPU features in oxidized-cell
+
+<CardGroup cols={2}>
+  <Card title="Instruction set" icon="code">
+    Full PowerPC 64 implementation with integer, FP, branch, load/store, and VMX/AltiVec instructions
+  </Card>
+  
+  <Card title="Thread management" icon="thread">
+    Priority scheduling (0-3071), affinity control, wait states, and preemption
+  </Card>
+  
+  <Card title="Exception handling" icon="warning">
+    Complete exception model with SRR0/SRR1, exception vectors, and rfi instruction
+  </Card>
+  
+  <Card title="Timing simulation" icon="clock">
+    Cycle-accurate timing, pipeline simulation, and branch prediction tracking
+  </Card>
+</CardGroup>
+
+See `oc-ppu/src/thread.rs:274-343` for timing and pipeline simulation details.
+
+## SPU (Synergistic Processing Unit)
+
+The SPUs are specialized SIMD processors optimized for data-parallel computation:
+- Graphics processing (vertex/pixel shaders)
+- Physics simulation
+- Audio processing
+- Video decoding
+
+<Info>
+  Each SPU has 256 KB of local storage (LS) that serves as both instruction and data memory. The SPU cannot directly access main memory - it must use DMA transfers via the MFC.
+</Info>
+
+### SPU architecture
+
+**Instruction set**: SPU ISA (completely different from PowerPC)
+
+**Registers**:
+- **128 GPRs**: All 128-bit wide, no distinction between integer/float/vector
+- **Preferred slot**: Word 0 of each register is the "preferred slot" for scalar operations
+
+**Memory**:
+- **256 KB Local Storage**: Fast on-chip SRAM for code and data
+- **No caches**: All memory accesses hit LS directly
+- **DMA only**: MFC (Memory Flow Controller) handles transfers to/from main memory
+
+**Channels**:
+SPUs communicate via 128 channels:
+- **MFC channels**: DMA commands and status
+- **Mailbox channels**: Message passing to/from PPU
+- **Signal channels**: Event notification
+- **Event channels**: Interrupt and synchronization
+
+### SPU thread state
+
+From `oc-spu/src/thread.rs:378-420`:
+
+```rust
+pub struct SpuRegisters {
+    /// General Purpose Registers (128-bit each)
+    pub gpr: [[u32; 4]; 128],
+    /// Program Counter (instruction address in local storage)
+    pub pc: u32,
+}
+
+pub struct SpuThread {
+    pub id: u32,
+    pub regs: SpuRegisters,
+    /// Local storage (256 KB)
+    pub local_storage: Box<[u8; 256 * 1024]>,
+    pub mfc: Mfc,         // Memory Flow Controller
+    pub channels: SpuChannels,
+    // ...
+}
+```
+
+### MFC (Memory Flow Controller)
+
+The MFC is the SPU's DMA engine:
+
+```rust
+// From oc-spu/src/mfc.rs
+pub struct Mfc {
+    /// DMA command queue (16 entries)
+    command_queue: VecDeque<DmaCommand>,
+    /// Active DMA transfers
+    active_transfers: Vec<DmaTransfer>,
+    /// MFC tag status
+    tag_status: [TagStatus; 32],
+}
+
+pub struct DmaCommand {
+    pub opcode: DmaOpcode,      // get, put, etc.
+    pub tag: u8,                // Tag for tracking (0-31)
+    pub local_addr: u32,        // Address in local storage
+    pub effective_addr: u64,    // Address in main memory
+    pub size: u32,              // Transfer size
+}
+```
+
+**DMA operations**:
+- `get`: Transfer from main memory to local storage
+- `put`: Transfer from local storage to main memory
+- `getf`/`putf`: Fence variants (ensure ordering)
+- `getb`/`putb`: Barrier variants (wait for completion)
+
+### SPU features in oxidized-cell
+
+<CardGroup cols={2}>
+  <Card title="SIMD instructions" icon="grid">
+    128-bit vector operations: arithmetic, logical, shuffle, permute, rotate
+  </Card>
+  
+  <Card title="Channel I/O" icon="arrow-right-arrow-left">
+    128 channels for MFC DMA, mailbox messaging, signals, and events
+  </Card>
+  
+  <Card title="Thread groups" icon="users">
+    Group up to 8 SPU threads for coordinated execution and event queues
+  </Card>
+  
+  <Card title="Isolation mode" icon="lock">
+    Secure execution mode where PPU cannot access SPU LS (used for DRM)
+  </Card>
+</CardGroup>
+
+See `oc-spu/src/thread.rs:248-357` for SPU thread groups and `oc-spu/src/thread.rs:549-576` for isolation mode.
+
+## PPU ↔ SPU communication
+
+### Mailboxes
+
+Mailboxes provide message passing between PPU and SPU:
+
+```
+PPU Thread                          SPU Thread
+    │                                   │
+    │  Write to SPU inbound mailbox     │
+    │ ─────────────────────────────────>│
+    │                                   │ Read mailbox channel
+    │                                   │ (blocks if empty)
+    │                                   │
+    │                                   │ Write to outbound mailbox
+    │<──────────────────────────────────│
+    │  Read from SPU outbound mailbox   │
+```
+
+### DMA transfers
+
+SPUs use DMA for bulk data transfers:
+
+```
+SPU Thread
+    │
+    │ Issue DMA get command (tag 5)
+    │ ────> MFC
+    │           │
+    │           │ Transfer from main memory
+    │           │ to local storage
+    │           │
+    │           ▼
+    │       Main Memory (256 MB XDR)
+    │
+    │ Wait for tag 5 completion
+    │ <──── MFC signals complete
+    │
+    │ Process data in local storage
+```
+
+### Event queues
+
+SPU events notify the PPU:
+
+```rust
+// From oc-spu/src/thread.rs:147-173
+pub struct SpuEvent {
+    pub source: u32,           // SPU ID or group ID
+    pub data: u64,             // Event data (stop signal value)
+    pub event_type: SpuEventType,
+}
+
+pub enum SpuEventType {
+    ThreadFinish,
+    StopSignal,
+    DmaComplete,
+    MailboxReady,
+    Exception,
+    GroupFinish,
+}
+```
+
+## Element Interconnect Bus (EIB)
+
+The EIB connects all Cell BE components:
+
+<Note>
+  The EIB is a ring bus with 4 data rings (2 clockwise, 2 counter-clockwise), each 16 bytes wide. Total theoretical bandwidth: 204.8 GB/s at 3.2 GHz.
+</Note>
+
+**Connected components**:
+- PPU
+- 8 SPUs
+- Memory controller (256 MB XDR DRAM)
+- I/O controller (RSX GPU, Blu-ray, USB, etc.)
+
+**Bandwidth allocation**:
+- Each component can send/receive simultaneously
+- Arbitration for bus conflicts
+- Optimized for streaming workloads
+
+## Memory architecture
+
+### Main memory (XDR DRAM)
+
+- **256 MB** total
+- **3.2 GHz** XDR DRAM (25.6 GB/s bandwidth)
+- **Shared** between PPU, SPUs, and RSX (via I/O controller)
+
+### SPU local storage
+
+- **256 KB** per SPU (8 SPUs = 2 MB total)
+- **Single-cycle access** (no cache)
+- **DMA only** for main memory access
+
+### RSX local memory
+
+- **256 MB** GDDR3 VRAM
+- **650 MHz** (22.4 GB/s bandwidth)
+- **Dedicated** to RSX, accessible by PPU via MMIO
+
+See [Memory model](/concepts/memory-model) for virtual address space layout.
+
+## Cell BE programming model
+
+### Task-based parallelism
+
+Typical Cell BE program:
+
+1. **PPU** splits work into tasks
+2. **PPU** loads SPU programs into local storage via DMA
+3. **PPU** starts SPU threads
+4. **SPUs** process tasks in parallel
+5. **SPUs** send completion events
+6. **PPU** collects results
+
+```
+PPU Thread (Main)
+    │
+    ├─> Load SPU program to LS 0
+    ├─> Load SPU program to LS 1
+    │   ...
+    ├─> Load SPU program to LS 5
+    │
+    ├─> Start SPU threads with arguments
+    │
+    │       SPU 0         SPU 1      ...     SPU 5
+    │         │             │                  │
+    │         │ DMA get     │ DMA get          │ DMA get
+    │         │ input       │ input            │ input
+    │         │             │                  │
+    │         │ Process     │ Process          │ Process
+    │         │             │                  │
+    │         │ DMA put     │ DMA put          │ DMA put
+    │         │ output      │ output           │ output
+    │         │             │                  │
+    │         │ Stop signal │ Stop signal      │ Stop signal
+    │         ▼             ▼                  ▼
+    │
+    │<─ Wait for SPU events
+    │
+    └─> Collect results
+```
+
+### Double buffering
+
+SPUs use double buffering to hide DMA latency:
+
+```
+Local Storage (256 KB)
+┌──────────────────┐
+│  Code (64 KB)    │
+├──────────────────┤
+│  Buffer A        │ ◄─── Processing
+│  (64 KB)         │
+├──────────────────┤
+│  Buffer B        │ ◄─── DMA transfer
+│  (64 KB)         │
+├──────────────────┤
+│  Output buffer   │
+│  (64 KB)         │
+└──────────────────┘
+```
+
+While processing buffer A, DMA loads the next chunk into buffer B.
+
+## Performance characteristics
+
+### Theoretical peak performance
+
+| Component | Peak Performance |
+|-----------|------------------|
+| PPU       | 6.4 GFLOPS (double) |
+| SPU (single) | 25.6 GFLOPS (single) |
+| SPUs (6 usable) | 153.6 GFLOPS (single) |
+| **Total** | **~160 GFLOPS** |
+
+### Real-world considerations
+
+<Info>
+  Achieving peak performance requires careful programming: efficient DMA usage, double buffering, and minimizing PPU/SPU synchronization overhead.
+</Info>
+
+**Bottlenecks**:
+- Memory bandwidth (25.6 GB/s shared)
+- DMA queue depth (16 entries per SPU)
+- PPU/SPU communication latency
+- Cache misses on PPU
+
+## Implementation in oxidized-cell
+
+Key source files:
+
+- **PPU**: `crates/oc-ppu/src/thread.rs:446-889`
+- **SPU**: `crates/oc-spu/src/thread.rs:422-714`
+- **PPU interpreter**: `crates/oc-ppu/src/interpreter.rs:82-577`
+- **SPU interpreter**: `crates/oc-spu/src/interpreter.rs`
+- **MFC**: `crates/oc-spu/src/mfc.rs`
+- **Channels**: `crates/oc-spu/src/channels.rs`
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Memory model" icon="memory" href="/concepts/memory-model">
+    Virtual address space and memory management
+  </Card>
+  
+  <Card title="Execution modes" icon="bolt" href="/concepts/execution-modes">
+    Interpreter vs JIT compilation
+  </Card>
+</CardGroup>
